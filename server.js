@@ -1548,7 +1548,7 @@ const server = http.createServer(async (req, res) => {
           continue; // rotate with cooldown
         }
 
-        if (upstreamRes.status === 400) {
+        if (upstreamRes.status === 400 || upstreamRes.status === 403) {
           if (AUTH_ERROR_RE.test(errMsg)) {
             // Dead/revoked key — park it long and rotate, don't fail the request.
             markKeyExhausted(keyIdx);
@@ -1556,7 +1556,15 @@ const server = http.createServer(async (req, res) => {
             log(`key#${keyState[keyIdx].id} rejected as invalid — parked 30m, rotating`);
             continue;
           }
-          // Deterministic payload error — fail fast, do not burn models.
+          if (upstreamRes.status === 403) {
+            // Permission denied for this model on this key (e.g. a custom/pro
+            // model the key's project isn't entitled to) — cool the model and
+            // rotate, don't kill the whole request over one model's access.
+            markExhausted(model);
+            log(`403 from ${model}: ${errMsg.slice(0, 300)} — rotating`);
+            continue;
+          }
+          // Deterministic 400 payload error — fail fast, do not burn models.
           totals.failFast400++;
           log(`400 from ${model}: ${errMsg.slice(0, 300)}`);
           // If we already opened a keepalive stream, a status code is no longer
