@@ -1,0 +1,28 @@
+{
+  "name": "opencode-gemini-proxy",
+  "version": "1.0.0",
+  "description": "Zero-dependency OpenAI-compatible proxy for Google Gemini with auto-failover, multi-key rotation, and OpenCode subagent support",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "opencode",
+    "gemini",
+    "google-ai-studio",
+    "proxy",
+    "openai-compatible",
+    "rate-limit",
+    "failover",
+    "load-balancer"
+  ],
+  "author": "mk-elbaz",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mk-elbaz/opencode-gemini-proxy.git"
+  }
+}

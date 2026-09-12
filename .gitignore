@@ -1,0 +1,8 @@
+.env
+*.log
+*.log.*
+node_modules/
+.DS_Store
+.vscode/
+.playwright-mcp/
+usage.json
