@@ -751,9 +751,15 @@ function addKey(rawKey) {
   const key = String(rawKey || '').trim();
   if (!key) throw new Error('key is required');
   if (keyState.some(k => k.key === key)) throw new Error('key already exists');
-  keyState.push({ id: nextKeyId++, key, failures: 0, until: 0 });
+  const id = nextKeyId++;
+  // Prevent state inheritance: clear any stale usage metrics for this ID
+  if (usage.counts[id]) {
+    delete usage.counts[id];
+    try { fs.writeFileSync(USAGE_FILE, JSON.stringify(usage)); } catch (e) { log('usage write error', e.message); }
+  }
+  keyState.push({ id, key, failures: 0, until: 0 });
   saveEnvConfig();
-  log(`key added: key#${keyState[keyState.length - 1].id} (${maskKey(key)})`);
+  log(`key added: key#${id} (${maskKey(key)})`);
 }
 
 function removeKey(id) {
@@ -761,6 +767,11 @@ function removeKey(id) {
   const idx = keyState.findIndex(k => k.id === id);
   if (idx < 0) throw new Error('key not found');
   const [removed] = keyState.splice(idx, 1);
+  // Clean up usage metrics for the deleted key so we don't leak stats if the ID gets reused later
+  if (usage.counts[id]) {
+    delete usage.counts[id];
+    try { fs.writeFileSync(USAGE_FILE, JSON.stringify(usage)); } catch (e) { log('usage write error', e.message); }
+  }
   saveEnvConfig();
   log(`key removed: key#${removed.id} (${maskKey(removed.key)})`);
 }
