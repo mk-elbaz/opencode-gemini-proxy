@@ -164,6 +164,98 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         .get-key-link { color: var(--text-faint); font-size: 11.5px; text-decoration: none; transition: color 150ms var(--ease); }
         .get-key-link:hover { color: var(--accent); text-decoration: underline; }
 
+        /* Pipeline Flow Diagram */
+        .pipeline-section { margin-bottom: 24px; }
+        .pipeline-body {
+            display: grid;
+            grid-template-columns: 240px 1fr 240px;
+            gap: 16px;
+            padding: 18px;
+            background: rgba(255, 255, 255, 0.015);
+            align-items: stretch;
+        }
+        @media (max-width: 820px) {
+            .pipeline-body { grid-template-columns: 1fr; gap: 20px; }
+        }
+        .pipeline-node {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .pipeline-title {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 6px;
+            margin-bottom: 4px;
+        }
+        .cascade-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .cascade-item {
+            background: rgba(255,255,255,0.015);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            transition: all 150ms var(--ease);
+        }
+        .cascade-item.target {
+            border-color: var(--ok);
+            background: var(--ok-dim);
+            box-shadow: 0 0 10px rgba(61, 220, 132, 0.1);
+        }
+        .cascade-item.cooling {
+            border-color: var(--warn);
+            background: var(--warn-dim);
+        }
+        .cascade-item.limit {
+            border-color: var(--danger);
+            background: var(--danger-dim);
+        }
+        .cascade-item.disabled {
+            opacity: 0.35;
+            border-style: dashed;
+        }
+        .fallback-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            color: var(--warn);
+            padding-left: 12px;
+            margin-top: -3px;
+            margin-bottom: -1px;
+            font-family: var(--mono);
+        }
+        .pulse-ring {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--ok);
+            box-shadow: 0 0 8px var(--ok);
+            animation: breathe 2s infinite ease-in-out;
+            margin-right: 6px;
+        }
+
         footer { text-align: center; color: var(--text-faint); font-size: 11px; margin-top: 32px; }
         @media (max-width: 560px) {
             body { padding: 24px 14px 48px; }
@@ -190,6 +282,48 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
             <div class="card"><div class="card-title">In Flight</div><div class="card-value" id="kpi-inflight">0</div></div>
             <div class="card"><div class="card-title">Uptime</div><div class="card-value small" id="kpi-uptime">0m 0s</div></div>
         </div>
+        <section class="pipeline-section">
+            <div class="section-header">
+                <span>Live Routing Pipeline</span>
+                <span class="count" style="display:flex; align-items:center;"><span class="pulse-ring"></span> Active Cascade</span>
+            </div>
+            <div class="pipeline-body">
+                <div class="pipeline-node">
+                    <div>
+                        <div class="pipeline-title">1. Client & Gateway</div>
+                        <div style="font-size: 13px; font-weight: 600; color: var(--text); margin-top: 4px;">OpenCode Client</div>
+                        <div style="font-size: 11px; color: var(--text-faint); font-family: var(--mono); margin-top: 2px;">POST /v1/chat/completions</div>
+                    </div>
+                    <div style="border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-family: var(--mono);">
+                        <div style="display: flex; justify-content: space-between;"><span>In-Flight:</span> <strong id="pipe-inflight" style="color: var(--accent);">0/4</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span>Tokens:</span> <strong id="pipe-tokens" style="color: var(--ok);">10/10</strong></div>
+                    </div>
+                </div>
+
+                <div class="pipeline-node" style="flex: 1;">
+                    <div class="pipeline-title">
+                        <span>2. Priority Cascade Ladder</span>
+                        <span id="pipe-cascade-count" style="font-weight: 500; font-size: 10px; color: var(--text-faint);"></span>
+                    </div>
+                    <div class="cascade-list" id="pipeline-cascade-list">
+                    </div>
+                </div>
+
+                <div class="pipeline-node">
+                    <div>
+                        <div class="pipeline-title">3. Round-Robin & Upstream</div>
+                        <div style="font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px;">API Key Pool</div>
+                        <div id="pipeline-keys-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 100px; overflow-y: auto; font-size: 11px; font-family: var(--mono);">
+                        </div>
+                    </div>
+                    <div style="border-top: 1px solid var(--border); padding-top: 8px;">
+                        <div style="font-size: 10px; font-weight: 600; color: var(--text-faint); margin-bottom: 2px; text-transform: uppercase;">UPSTREAM</div>
+                        <div style="font-size: 12px; font-family: var(--mono); color: var(--ok); font-weight: 600;">Google AI Studio ⚡</div>
+                        <div style="font-size: 10.5px; color: var(--text-faint); margin-top: 2px;">True SSE Stream Relay</div>
+                    </div>
+                </div>
+            </div>
+        </section>
         <section>
             <div class="section-header">Models <span class="count" id="models-count"></span></div>
             <table>
@@ -274,6 +408,86 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
             document.querySelectorAll('.remove-key').forEach(btn => btn.addEventListener('click', onRemoveKey));
         }
 
+        function renderPipeline(config, metrics) {
+            document.getElementById('pipe-inflight').textContent = metrics.bucket.in_flight + '/' + metrics.bucket.max_concurrent;
+            document.getElementById('pipe-tokens').textContent = Math.round(metrics.bucket.tokens * 10) / 10 + '/10';
+
+            const enabledSet = new Set(config.enabledModels || []);
+            const byName = new Map((metrics.models || []).map(m => [m.model, m]));
+            
+            let targetFound = false;
+            const cascadeItems = config.allModels.map(name => {
+                const enabled = enabledSet.has(name);
+                const m = byName.get(name);
+                const cooling = m && m.cooling;
+                const limit = m && m.daily_limited;
+
+                let stateClass = '';
+                let isTarget = false;
+
+                if (!enabled) {
+                    stateClass = 'disabled';
+                } else if (limit) {
+                    stateClass = 'limit';
+                } else if (cooling) {
+                    stateClass = 'cooling';
+                } else {
+                    if (!targetFound) {
+                        isTarget = true;
+                        stateClass = 'target';
+                        targetFound = true;
+                    } else {
+                        stateClass = 'standby';
+                    }
+                }
+
+                return { name, enabled, cooling, limit, stateClass, isTarget, m };
+            });
+
+            document.getElementById('pipe-cascade-count').textContent = config.enabledModels.length + ' active models';
+
+            document.getElementById('pipeline-cascade-list').innerHTML = cascadeItems.map(item => {
+                let badgeHtml = '';
+                if (!item.enabled) {
+                    badgeHtml = '<span class="badge off" style="font-size:10px; padding:1px 6px;">off</span>';
+                } else if (item.limit) {
+                    badgeHtml = '<span class="badge limit" style="font-size:10px; padding:1px 6px;">limited</span>';
+                } else if (item.cooling) {
+                    badgeHtml = '<span class="badge cooling" style="font-size:10px; padding:1px 6px;">' + item.m.retry_in_s + 's</span>';
+                } else if (item.isTarget) {
+                    badgeHtml = '<span class="badge active" style="font-size:10px; padding:1px 6px; box-shadow: 0 0 6px var(--ok);">TARGET</span>';
+                } else {
+                    badgeHtml = '<span class="badge active" style="font-size:10px; padding:1px 6px; background:rgba(61,220,132,0.04); color:var(--text-dim);">ready</span>';
+                }
+
+                let fallbackHtml = '';
+                if ((item.cooling || item.limit) && item.enabled) {
+                    fallbackHtml = '<div class="fallback-indicator">↳ 429 Failover to next</div>';
+                }
+
+                return '<div class="cascade-item ' + item.stateClass + '">' +
+                    '<span style="font-weight:' + (item.isTarget ? '600' : '400') + '; color:' + (item.enabled ? 'var(--text)' : 'var(--text-faint)') + ';">' + item.name + '</span>' +
+                    badgeHtml +
+                    '</div>' + fallbackHtml;
+            }).join('');
+
+            const keysList = config.keys.map((k, i) => {
+                const m = (metrics.keys || [])[i];
+                const isCooling = k.cooling || (m && m.retry_in_s > 0);
+                const isLimit = k.daily_limited;
+                let color = 'var(--ok)';
+                let label = 'Active';
+                if (isLimit) { color = 'var(--danger)'; label = 'Limit'; }
+                else if (isCooling) { color = 'var(--warn)'; label = m ? m.retry_in_s + 's' : 'Cooling'; }
+
+                return '<div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg); padding:4px 8px; border-radius:4px; border:1px solid var(--border);">' +
+                    '<span>key#' + k.id + ' (' + k.masked + ')</span>' +
+                    '<span style="color:' + color + '; font-weight:600; font-size:10.5px;">' + label + '</span>' +
+                    '</div>';
+            }).join('');
+            document.getElementById('pipeline-keys-list').innerHTML = keysList || '<div style="color:var(--text-faint); font-size:11px; text-align:center;">No keys configured</div>';
+        }
+
         async function onModelToggle() {
             const models = Array.from(document.querySelectorAll('.model-toggle:checked')).map(b => b.value);
             if (!models.length) { this.checked = true; alert('At least one model must stay enabled.'); return; }
@@ -354,6 +568,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
             renderModels(config, data);
             renderKeys(config, data);
+            renderPipeline(config, data);
         }
         setInterval(updateDashboard, 2000); updateDashboard();
     </script>

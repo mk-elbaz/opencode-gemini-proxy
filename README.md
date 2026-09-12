@@ -13,7 +13,7 @@ It solves the primary pain point of free-tier API usage: **rate limits (HTTP 429
 - **Multi-Model Fallback Cascade**: Automatically rotates through Google's Gemini flash models when rate limits are hit:
   `gemini-3.8-flash` ➔ `gemini-3.7-flash` ➔ `gemini-3.6-flash` ➔ `gemini-3.5-flash` ➔ `gemini-3.5-flash-lite` ➔ `gemini-3.1-flash-lite`.
 - **Multi-Key Round-Robin Pooling**: Load-balances requests across multiple Google API keys to multiply your quota pool.
-- **Live Web Dashboard**: `http://localhost:8085` — add/remove API keys, enable/disable models, and add custom model IDs (e.g. a pro-tier model your plan grants access to) without touching `.env` by hand, plus live per-model/per-key stats.
+- **Live Web Dashboard & Visualizer**: `http://localhost:8085` — A gorgeous control panel featuring a **Live Real-time Routing Pipeline & Fallback Cascade** (watch request routing, live token bucket, and active/cooling/limited models/keys animate in real time), plus options to add/remove API keys, enable/disable models, and register custom model IDs on the fly.
 - **Daily Quota Tracking**: Tracks requests sent per model per key, and detects when a 429 is a daily (RPD) limit vs. a short per-minute one — parking that model/key until Google's real reset (midnight **Pacific Time**, not UTC) instead of retrying uselessly for hours.
 - **Thought-Signature Escape Hatch**: Automatically injects the documented `skip_thought_signature_validator` sentinel into replayed tool calls, so OpenCode subagents can execute tool loops without 400 errors.
 - **True SSE Streaming Relay**: Line-buffered, verbatim event forwarding with chunk preservation, `[DONE]` synthesis, and mid-stream error detection.
