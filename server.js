@@ -690,11 +690,11 @@ const GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai
 const USAGE_FILE = path.join(__dirname, 'usage.json');
 const PACIFIC_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
 function todayPacific() { return PACIFIC_DATE_FMT.format(new Date()); }
+function getKeyFingerprint(key) {
+  if (!key) return 'unknown';
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 12);
+}
 let usage = { day: todayPacific(), counts: {} }; // counts[keyId][model] = n
-try {
-  const raw = JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8'));
-  if (raw && raw.day === todayPacific()) usage = raw;
-} catch { /* no usage file yet, or stale day — start fresh */ }
 
 function bumpDailyUsage(keyId, model) {
   if (usage.day !== todayPacific()) { usage = { day: todayPacific(), counts: {} }; }
@@ -702,7 +702,7 @@ function bumpDailyUsage(keyId, model) {
   if (typeof usage.counts[keyId] !== 'object' || usage.counts[keyId] === null) usage.counts[keyId] = {};
   const perKey = usage.counts[keyId];
   perKey[model] = (perKey[model] || 0) + 1;
-  try { fs.writeFileSync(USAGE_FILE, JSON.stringify(usage)); } catch (e) { log('usage write error', e.message); }
+  saveUsage();
 }
 // Total requests today for one key, across all models.
 function requestsTodayForKey(keyId) {
@@ -868,6 +868,77 @@ const totals = { requests: 0, ok: 0, final429: 0, failFast400: 0, upstreamError:
 const modelMetrics = new Map(); // model -> { attempts, ok, cooldowns, attemptErrors, totalLatencyMs, lastOkAt, lastCooldownAt }
 const keyMetrics = new Map();   // key idx -> { attempts, ok, cooldowns, attemptErrors, totalLatencyMs, lastOkAt, lastCooldownAt }
 
+function saveUsage() {
+  if (usage.day !== todayPacific()) {
+    usage = { day: todayPacific(), counts: {} };
+    totals.requests = 0;
+    totals.ok = 0;
+    totals.final429 = 0;
+    totals.failFast400 = 0;
+    totals.upstreamError = 0;
+    totals.synthesizedStream = 0;
+    modelMetrics.clear();
+    keyMetrics.clear();
+  }
+  usage.totals = { ...totals };
+
+  const mmObj = {};
+  for (const [model, s] of modelMetrics.entries()) {
+    mmObj[model] = { ...s };
+  }
+  usage.modelMetrics = mmObj;
+
+  const kmObj = {};
+  for (const [idx, s] of keyMetrics.entries()) {
+    const kObj = keyState[idx];
+    if (kObj && kObj.key) {
+      const fp = getKeyFingerprint(kObj.key);
+      kmObj[fp] = { ...s };
+    }
+  }
+  usage.keyMetrics = kmObj;
+
+  try {
+    fs.writeFileSync(USAGE_FILE, JSON.stringify(usage, null, 2));
+  } catch (e) {
+    log('usage write error', e.message);
+  }
+}
+
+function loadUsage() {
+  try {
+    if (fs.existsSync(USAGE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8'));
+      if (raw && raw.day === todayPacific()) {
+        usage = raw;
+        if (raw.totals) Object.assign(totals, raw.totals);
+        if (raw.modelMetrics) {
+          for (const [model, s] of Object.entries(raw.modelMetrics)) {
+            modelMetrics.set(model, { ...s });
+          }
+        }
+        if (raw.keyMetrics) {
+          for (let idx = 0; idx < keyState.length; idx++) {
+            const kObj = keyState[idx];
+            if (kObj && kObj.key) {
+              const fp = getKeyFingerprint(kObj.key);
+              if (raw.keyMetrics[fp]) {
+                keyMetrics.set(idx, { ...raw.keyMetrics[fp] });
+              }
+            }
+          }
+        }
+        return;
+      }
+    }
+  } catch (e) {
+    log('usage load error', e.message);
+  }
+  usage = { day: todayPacific(), counts: {} };
+}
+
+loadUsage();
+
 function mm(model) {
   let s = modelMetrics.get(model);
   if (!s) {
@@ -883,6 +954,7 @@ function recordOk(model, attemptStart) {
   s.totalLatencyMs += Date.now() - attemptStart;
   s.lastOkAt = Date.now();
   totals.ok++;
+  saveUsage();
 }
 
 function km(idx) {
@@ -899,6 +971,7 @@ function recordKeyOk(idx, attemptStart) {
   s.ok++;
   s.totalLatencyMs += Date.now() - attemptStart;
   s.lastOkAt = Date.now();
+  saveUsage();
 }
 
 function markExhausted(model, daily = false) {
@@ -912,6 +985,7 @@ function markExhausted(model, daily = false) {
   const m = mm(model);
   m.cooldowns++;
   m.lastCooldownAt = Date.now();
+  saveUsage();
   log(`cooldown ${model} for ${Math.round((s.until - Date.now()) / 1000)}s` +
     (daily ? ' (daily quota — parked until Pacific midnight)' : ` (failure #${s.failures})`));
 }
@@ -1405,6 +1479,7 @@ const server = http.createServer(async (req, res) => {
 
     log(`request: model=${requestedModel} stream=${isStreaming} msgs=${messages.length} tools=${!!rawPayload.tools} ctx=${cleanPayload.messages.length}`);
     totals.requests++;
+    saveUsage();
 
     const requestDeadline = Date.now() + (WAIT_FOR_QUOTA ? Math.max(MAX_WAIT_MS, REQUEST_BUDGET_MS) : REQUEST_BUDGET_MS);
 
@@ -1566,6 +1641,7 @@ const server = http.createServer(async (req, res) => {
           }
           // Deterministic 400 payload error — fail fast, do not burn models.
           totals.failFast400++;
+          saveUsage();
           log(`400 from ${model}: ${errMsg.slice(0, 300)}`);
           // If we already opened a keepalive stream, a status code is no longer
           // available — report it in-stream instead of silently hanging.
@@ -1576,6 +1652,7 @@ const server = http.createServer(async (req, res) => {
 
         if (!upstreamRes.ok || parsed?.error || !parsed?.choices?.length) {
           totals.upstreamError++;
+          saveUsage();
           log(`upstream error ${upstreamRes.status} from ${model}: ${errMsg.slice(0, 300)}`);
           if (res.headersSent) safeEndSse(res, errMsg);
           else sendJson(res, upstreamRes.status || 502, { error: { message: errMsg, status: upstreamRes.status || 502 } });
@@ -1602,6 +1679,7 @@ const server = http.createServer(async (req, res) => {
           res.write('data: [DONE]\n\n');
           res.end();
           totals.synthesizedStream++;
+          saveUsage();
           log(`synthesized stream from JSON via ${model}`);
           return;
         }
@@ -1616,6 +1694,7 @@ const server = http.createServer(async (req, res) => {
         const aborted = guard.signal.aborted;
         mm(model).attemptErrors++;
         km(keyIdx).attemptErrors++;
+        saveUsage();
         log(`attempt ${model} failed: ${err.message} aborted=${aborted}`);
 
         if (aborted && realDataSent) {
@@ -1640,6 +1719,7 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- All Google models exhausted ---- */
     totals.final429++;
+    saveUsage();
     const nowDone = Date.now();
     const modelStatus = GOOGLE_MODELS.map(m => {
       const s = modelState.get(m) || {};
@@ -1700,6 +1780,13 @@ server.on('error', err => {
   }
   log('SERVER ERROR:', err?.stack || err?.message || err);
   process.exit(1);
+});
+
+['SIGINT', 'SIGTERM', 'SIGHUP', 'beforeExit'].forEach(sig => {
+  process.on(sig, () => {
+    saveUsage();
+    if (sig !== 'beforeExit') process.exit(0);
+  });
 });
 
 server.listen(PORT, '127.0.0.1', () => {
