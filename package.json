@@ -46,6 +46,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mk-elbaz/opencode-gemini-proxy.git"
-  }
+    "url": "git+https://github.com/mk-elbaz/opencode-gemini-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mk-elbaz/opencode-gemini-proxy/issues"
+  },
+  "homepage": "https://github.com/mk-elbaz/opencode-gemini-proxy#readme"
 }
