@@ -1,0 +1,7 @@
+.git
+.env
+*.log*
+usage.json
+.playwright-mcp
+node_modules
+assets

@@ -60,3 +60,25 @@ export function msUntilPacificMidnight(now = new Date()) {
     (Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second)) * 1000 + now.getMilliseconds();
   return 24 * 60 * 60 * 1000 - msSinceLocalMidnight;
 }
+
+/* Google's 429 bodies carry the documented RetryInfo detail with the exact
+ * wait time it wants ("37s", sometimes fractional "12.5s"), which is far more
+ * accurate than our own exponential backoff guess. Falls back to the HTTP
+ * Retry-After header (also seconds) when no RetryInfo detail is present.
+ * Returns null when neither is available — caller keeps its own default. */
+export function retryDelayMs(parsed, retryAfterHeader) {
+  try {
+    const details = parsed?.error?.details || [];
+    for (const d of details) {
+      if (d?.['@type'] === 'type.googleapis.com/google.rpc.RetryInfo' && d.retryDelay) {
+        const secs = parseFloat(String(d.retryDelay).replace(/s$/i, ''));
+        if (!Number.isNaN(secs)) return secs * 1000;
+      }
+    }
+  } catch { /* fall through */ }
+  if (retryAfterHeader != null) {
+    const secs = Number(retryAfterHeader);
+    if (!Number.isNaN(secs)) return secs * 1000;
+  }
+  return null;
+}

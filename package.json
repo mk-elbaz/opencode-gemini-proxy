@@ -4,6 +4,29 @@
   "description": "Zero-dependency OpenAI-compatible proxy for Google Gemini with auto-failover, multi-key rotation, and OpenCode subagent support",
   "type": "module",
   "main": "server.js",
+  "bin": {
+    "opencode-gemini-proxy": "cli.js"
+  },
+  "files": [
+    "server.js",
+    "cli.js",
+    "paths.js",
+    "compat.js",
+    "quota.js",
+    "status.js",
+    "discovery.js",
+    "dashboard/",
+    "opencode-plugin/",
+    ".env.example",
+    "README.md",
+    "LICENSE",
+    "watchdog.sh",
+    "watchdog.vbs",
+    "start.bat"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",

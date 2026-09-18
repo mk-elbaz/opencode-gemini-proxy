@@ -7,8 +7,13 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { quotaScope, isDailyQuota, msUntilPacificMidnight } from './quota.js';
+import path from 'node:path';
+import { quotaScope, isDailyQuota, msUntilPacificMidnight, retryDelayMs } from './quota.js';
 import { addToolCallIndices, correctFinishReason, patchStreamEvent } from './compat.js';
+import { stripProxyStatusLines, pushRing } from './status.js';
+import { resolveDataDir } from './paths.js';
+import { mergeOpenCodeConfig, nextKeySlot } from './cli.js';
+import { filterChatModels, sortByVersionDesc, diffCatalog } from './discovery.js';
 
 const perModelRpm = {
   error: { details: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', quotaMetric: 'per_model' }] },
@@ -74,6 +79,24 @@ test('msUntilPacificMidnight: same 10-minute gap in summer (PDT = UTC-7), not th
   assert.equal(ms, 10 * 60 * 1000);
 });
 
+/* ---- RetryInfo-aware retry delay (honors Google's exact cooldown) ---- */
+
+test('retryDelayMs: reads the RetryInfo detail (whole seconds)', () => {
+  const parsed = { error: { details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37s' }] } };
+  assert.equal(retryDelayMs(parsed, null), 37000);
+});
+
+test('retryDelayMs: reads fractional seconds and falls back to the Retry-After header when no RetryInfo detail exists', () => {
+  const parsed = { error: { details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '12.5s' }] } };
+  assert.equal(retryDelayMs(parsed, null), 12500);
+  assert.equal(retryDelayMs({}, '5'), 5000);
+});
+
+test('retryDelayMs: returns null when neither source has a delay', () => {
+  assert.equal(retryDelayMs(null, null), null);
+  assert.equal(retryDelayMs({ error: { details: [] } }, undefined), null);
+});
+
 /* ---- OpenAI-spec compliance fixes for Google's compat endpoint ---- */
 
 // A tool-calling turn must close with "tool_calls". Google's streaming path
@@ -134,6 +157,116 @@ test('addToolCallIndices: numbers by array position, leaving existing values alo
   addToolCallIndices(tcs);
   assert.deepEqual(tcs.map((t) => t.index), [0, 9, 2]);
   assert.doesNotThrow(() => addToolCallIndices(undefined));
+});
+
+/* ---- status.js: replay stripping + event ring buffer ---- */
+
+test('stripProxyStatusLines: drops proxy status lines, keeps the rest', () => {
+  const text = 'Line one\n[gemini-proxy] gemini-3.8-flash rate-limited, trying gemini-3.7-flash\nLine two';
+  assert.equal(stripProxyStatusLines(text), 'Line one\nLine two');
+});
+
+test('stripProxyStatusLines: returns null when nothing is left (field should be deleted)', () => {
+  assert.equal(stripProxyStatusLines('[gemini-proxy] all models cooling\n[gemini-proxy] still waiting'), null);
+  assert.equal(stripProxyStatusLines('   \n  '), null);
+});
+
+test('stripProxyStatusLines: non-string input passed through untouched', () => {
+  assert.equal(stripProxyStatusLines(undefined), undefined);
+  assert.equal(stripProxyStatusLines(null), null);
+});
+
+test('pushRing: keeps only the last `max` entries, oldest first', () => {
+  const ring = [];
+  for (let i = 0; i < 5; i++) pushRing(ring, { i }, 3);
+  assert.deepEqual(ring.map(e => e.i), [2, 3, 4]);
+});
+
+/* ---- paths.js: data dir precedence ---- */
+
+test('resolveDataDir: PROXY_DATA_DIR always wins', () => {
+  const dir = resolveDataDir({ env: { PROXY_DATA_DIR: '/custom' }, hasLocalEnv: true, homedir: '/home/x', moduleDir: '/repo' });
+  assert.equal(dir, '/custom');
+});
+
+test('resolveDataDir: a local .env (git checkout) uses the module dir', () => {
+  const dir = resolveDataDir({ env: {}, hasLocalEnv: true, homedir: '/home/x', moduleDir: '/repo' });
+  assert.equal(dir, '/repo');
+});
+
+test('resolveDataDir: no override and no local .env falls back to ~/.config/opencode-gemini-proxy', () => {
+  const dir = resolveDataDir({ env: {}, hasLocalEnv: false, homedir: '/home/x', moduleDir: '/repo' });
+  assert.equal(dir, path.join('/home/x', '.config', 'opencode-gemini-proxy'));
+});
+
+/* ---- cli.js: OpenCode config merge + .env key slot ---- */
+
+test('mergeOpenCodeConfig: creates a fresh config with $schema and defaults when none exists', () => {
+  const cfg = mergeOpenCodeConfig(undefined, 8085);
+  assert.equal(cfg.$schema, 'https://opencode.ai/config.json');
+  assert.equal(cfg.provider.google.options.baseURL, 'http://localhost:8085/v1');
+  assert.equal(cfg.model, 'google/gemini-3.8-flash');
+  assert.equal(cfg.small_model, 'google/gemini-3.5-flash-lite');
+});
+
+test('mergeOpenCodeConfig: preserves existing providers, models, and a custom top-level model', () => {
+  const existing = { provider: { anthropic: { npm: '@ai-sdk/anthropic' } }, model: 'anthropic/claude', small_model: 'anthropic/haiku' };
+  const cfg = mergeOpenCodeConfig(existing, 9000);
+  assert.equal(cfg.provider.anthropic.npm, '@ai-sdk/anthropic');
+  assert.ok(cfg.provider.google);
+  assert.equal(cfg.provider.google.options.baseURL, 'http://localhost:9000/v1');
+  // pre-existing top-level model/small_model are never overwritten
+  assert.equal(cfg.model, 'anthropic/claude');
+  assert.equal(cfg.small_model, 'anthropic/haiku');
+});
+
+test('nextKeySlot: finds the next free GOOGLE_API_KEY_N, filling gaps last', () => {
+  assert.equal(nextKeySlot(''), 1);
+  assert.equal(nextKeySlot('GOOGLE_API_KEY_1=abc\n'), 2);
+  assert.equal(nextKeySlot('GOOGLE_API_KEY_1=abc\nGOOGLE_API_KEY_3=def\n'), 2);
+  assert.equal(nextKeySlot('GOOGLE_API_KEY=legacy\n'), 2);
+});
+
+/* ---- discovery.js: Google model-list -> chat-model catalog diff ---- */
+
+// Shaped like Google's real GET /v1beta/models response.
+const googleModelsResponse = {
+  models: [
+    { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+    { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+    { name: 'models/gemini-3.8-flash-latest', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+    { name: 'models/gemini-3.8-flash-exp', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+    { name: 'models/gemini-3.8-pro', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+    { name: 'models/gemini-3.8-flash-tts', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/gemini-3.5-transcribe', supportedGenerationMethods: ['generateContent'] },
+    { name: 'models/gemini-3.5-flash-lite', supportedGenerationMethods: ['countTokens'] }, // no generateContent
+  ],
+};
+
+test('filterChatModels: keeps real chat models, strips "models/", drops embeddings/-latest/non-chat/no-generateContent', () => {
+  const ids = filterChatModels(googleModelsResponse.models);
+  assert.deepEqual(ids, ['gemini-3.8-flash', 'gemini-3.8-flash-exp', 'gemini-3.8-pro']);
+});
+
+test('filterChatModels: handles a non-array input without throwing', () => {
+  assert.deepEqual(filterChatModels(null), []);
+  assert.deepEqual(filterChatModels(undefined), []);
+});
+
+test('sortByVersionDesc: newest version first, pro before flash before flash-lite within a version', () => {
+  const ids = ['gemini-3.5-flash', 'gemini-3.8-flash-lite', 'gemini-3.8-pro', 'gemini-3.8-flash'];
+  assert.deepEqual(sortByVersionDesc(ids), ['gemini-3.8-pro', 'gemini-3.8-flash', 'gemini-3.8-flash-lite', 'gemini-3.5-flash']);
+});
+
+test('sortByVersionDesc: unparseable versions sort last, stable for ties', () => {
+  const ids = ['gemini-pro-vision', 'gemini-3.8-flash', 'gemini-nano'];
+  assert.deepEqual(sortByVersionDesc(ids), ['gemini-3.8-flash', 'gemini-pro-vision', 'gemini-nano']);
+});
+
+test('diffCatalog: reports newly-discovered and no-longer-listed ids', () => {
+  const previous = ['gemini-3.7-flash', 'gemini-3.8-flash'];
+  const discovered = ['gemini-3.8-flash', 'gemini-3.8-pro'];
+  assert.deepEqual(diffCatalog(previous, discovered), { added: ['gemini-3.8-pro'], removed: ['gemini-3.7-flash'] });
 });
 
 test('correctFinishReason: only rewrites stop, and only when tool calls are present', () => {

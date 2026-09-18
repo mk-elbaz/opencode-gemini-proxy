@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Gemini Failover Proxy</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%2311161f%27/%3E%3Cpath d=%27M18 5 9 18h6l-1 9 9-13h-6z%27 fill=%27%236ea8fe%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* ------------------------------------------------------------------ */
+/* Tokens — dark is the default palette; light overrides live in the   */
+/* prefers-color-scheme block and are re-affirmed under [data-theme]   */
+/* so a ?theme= override always wins over the system preference.      */
+/* ------------------------------------------------------------------ */
+:root {
+    --bg: #0a0e14;
+    --bg-elevated: #11161c;
+    --bg-sunken: #070a0f;
+    --border: #1e2530;
+    --border-strong: #2c3542;
+    --text: #e7eaf0;
+    --text-dim: #9aa4b2;
+    --text-faint: #6b7484;
+    --ok: #3ddc84;
+    --ok-dim: rgba(61, 220, 132, 0.13);
+    --warn: #f0b352;
+    --warn-dim: rgba(240, 179, 82, 0.13);
+    --danger: #f27171;
+    --danger-dim: rgba(242, 113, 113, 0.13);
+    --accent: #6ea8fe;
+    --accent-dim: rgba(110, 168, 254, 0.13);
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, sans-serif;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.36);
+    --focus: var(--accent);
+    --radius: 8px;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+        --bg: #f6f7f9; --bg-elevated: #ffffff; --bg-sunken: #eef0f3;
+        --border: #dde1e8; --border-strong: #c7cdd8;
+        --text: #12161d; --text-dim: #545e70; --text-faint: #7a8294;
+        --ok: #1c8a55; --ok-dim: rgba(28, 138, 85, 0.10);
+        --warn: #9a6510; --warn-dim: rgba(154, 101, 16, 0.10);
+        --danger: #c23d43; --danger-dim: rgba(194, 61, 67, 0.10);
+        --accent: #2f6fed; --accent-dim: rgba(47, 111, 237, 0.10);
+        --shadow-sm: 0 1px 2px rgba(20, 24, 33, 0.08);
+        --shadow-md: 0 6px 20px rgba(20, 24, 33, 0.10);
+        color-scheme: light;
+    }
+}
+:root[data-theme="light"] {
+    --bg: #f6f7f9; --bg-elevated: #ffffff; --bg-sunken: #eef0f3;
+    --border: #dde1e8; --border-strong: #c7cdd8;
+    --text: #12161d; --text-dim: #545e70; --text-faint: #7a8294;
+    --ok: #1c8a55; --ok-dim: rgba(28, 138, 85, 0.10);
+    --warn: #9a6510; --warn-dim: rgba(154, 101, 16, 0.10);
+    --danger: #c23d43; --danger-dim: rgba(194, 61, 67, 0.10);
+    --accent: #2f6fed; --accent-dim: rgba(47, 111, 237, 0.10);
+    --shadow-sm: 0 1px 2px rgba(20, 24, 33, 0.08);
+    --shadow-md: 0 6px 20px rgba(20, 24, 33, 0.10);
+    color-scheme: light;
+}
+:root[data-theme="dark"] {
+    --bg: #0a0e14; --bg-elevated: #11161c; --bg-sunken: #070a0f;
+    --border: #1e2530; --border-strong: #2c3542;
+    --text: #e7eaf0; --text-dim: #9aa4b2; --text-faint: #6b7484;
+    --ok: #3ddc84; --ok-dim: rgba(61, 220, 132, 0.13);
+    --warn: #f0b352; --warn-dim: rgba(240, 179, 82, 0.13);
+    --danger: #f27171; --danger-dim: rgba(242, 113, 113, 0.13);
+    --accent: #6ea8fe; --accent-dim: rgba(110, 168, 254, 0.13);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.36);
+    color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+html { scrollbar-color: var(--border) transparent; }
+body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    font-size: 13px; line-height: 1.45;
+    padding: 32px 20px 56px;
+}
+::selection { background: var(--accent-dim); color: var(--text); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 100px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+img, svg { max-width: 100%; }
+[hidden] { display: none !important; }
+
+.container { max-width: 1040px; margin: 0 auto; }
+
+/* ---- Header ---- */
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
+.title-group { display: flex; align-items: center; gap: 12px; }
+.logo { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-elevated); border: 1px solid var(--border); flex-shrink: 0; }
+.logo svg { width: 16px; height: 16px; color: var(--accent); }
+h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.subtitle { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; font-family: var(--mono); }
+
+.live-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.live-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-dim); animation: breathe 2.6s ease-in-out infinite; }
+.live-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+.live-dot.danger { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-dim); }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.status-badge { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 100px; font-size: 12px; font-weight: 600; }
+.status-badge.ok { background: var(--ok-dim); color: var(--ok); }
+.status-badge.degraded { background: var(--warn-dim); color: var(--warn); }
+
+/* ---- Admin notice ---- */
+.notice { background: var(--danger-dim); border: 1px solid var(--danger); color: var(--danger); border-radius: var(--radius);
+    padding: 10px 14px; font-size: 12.5px; margin-bottom: 20px; }
+.notice code { font-family: var(--mono); background: rgba(0,0,0,0.14); padding: 1px 5px; border-radius: 4px; }
+
+/* ---- KPI row ---- */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 22px; }
+.kpi { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow-sm); }
+.kpi-title { font-size: 10.5px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+.kpi-value { font-size: 24px; font-weight: 600; font-family: var(--mono); letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums; border-radius: 4px; transition: color 220ms var(--ease); }
+.kpi-value.small { font-size: 18px; }
+.kpi-value.pulse { animation: value-pulse 500ms var(--ease); }
+@keyframes value-pulse { 0% { color: var(--accent); } 100% { color: var(--text); } }
+
+/* ---- Panels (one consistent container for every section) ---- */
+.panel { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 18px; overflow: hidden; box-shadow: var(--shadow-sm); }
+.panel-header { display: flex; align-items: baseline; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.panel-header .count { color: var(--text-faint); font-weight: 500; font-size: 11.5px; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+.panel-body { padding: 16px; }
+
+/* ---- Tables ---- */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; color: var(--text-faint); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 9px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--bg-sunken); }
+td.name { font-family: var(--sans); font-weight: 500; }
+td.num { color: var(--text-dim); }
+th.chk-col, td.chk-col { width: 30px; padding-right: 0; }
+.table-empty { color: var(--text-faint); text-align: center; padding: 18px 16px !important; font-family: var(--sans); }
+
+/* ---- Status / outcome badges ---- */
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 100px; font-size: 10.5px; font-weight: 600; font-family: var(--sans); white-space: nowrap; }
+.badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.badge.active { background: var(--ok-dim); color: var(--ok); }
+.badge.active::before { background: var(--ok); }
+.badge.cooling { background: var(--warn-dim); color: var(--warn); }
+.badge.cooling::before { background: var(--warn); }
+.badge.off { background: rgba(120, 130, 148, 0.14); color: var(--text-faint); }
+.badge.off::before { background: var(--text-faint); }
+.badge.limit { background: var(--danger-dim); color: var(--danger); }
+.badge.limit::before { background: var(--danger); }
+.badge.new { background: var(--accent-dim); color: var(--accent); }
+.badge.new::before { background: var(--accent); }
+
+/* ---- Quota bars ---- */
+.quota { display: flex; flex-direction: column; gap: 3px; min-width: 84px; }
+.quota-bar { width: 100%; height: 4px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; }
+.quota-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+.quota-fill.warn { background: var(--warn); }
+.quota-fill.danger { background: var(--danger); }
+.quota-label { font-size: 11px; color: var(--text-dim); display: flex; gap: 6px; align-items: baseline; }
+.quota-eta { color: var(--text-faint); font-family: var(--sans); font-size: 10.5px; }
+
+/* ---- Inputs / buttons / forms ---- */
+input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+button { font-family: var(--sans); cursor: pointer; border: none; border-radius: 6px; font-weight: 600;
+    transition: filter 150ms var(--ease), opacity 150ms var(--ease), color 150ms var(--ease), border-color 150ms var(--ease); }
+button:active:not(:disabled) { transform: scale(0.97); }
+.btn-ghost { background: transparent; color: var(--text-faint); border: 1px solid var(--border); padding: 4px 10px; font-size: 11px; }
+.btn-ghost:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.btn-ghost:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.inline-form { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.inline-form input[type="text"], .inline-form input[type="password"] {
+    flex: 1; min-width: 160px; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;
+    color: var(--text); font-family: var(--mono); font-size: 12px; }
+.inline-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+.inline-form button[type="submit"] { background: var(--accent); color: var(--bg); padding: 8px 16px; font-size: 12px; }
+.inline-form button[type="submit"]:hover:not(:disabled) { filter: brightness(1.08); }
+.inline-form button[type="submit"]:disabled { opacity: 0.6; cursor: not-allowed; }
+.form-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 16px 12px; flex-wrap: wrap; }
+.form-error { color: var(--danger); font-size: 11.5px; min-height: 1em; }
+.text-link { color: var(--text-faint); font-size: 11px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.text-link:hover { color: var(--accent); text-decoration: underline; }
+.text-link svg { width: 10px; height: 10px; }
+
+/* ---- Live routing pipeline ---- */
+.flow-body { display: grid; grid-template-columns: 220px 1fr 220px; gap: 14px; padding: 16px; align-items: stretch; }
+@media (max-width: 820px) { .flow-body { grid-template-columns: 1fr; } }
+.flow-stage { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.flow-stage-title { font-size: 10px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em;
+    display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.flow-stat-row { display: flex; justify-content: space-between; font-size: 11.5px; font-family: var(--mono); }
+.flow-stat-row strong { font-variant-numeric: tabular-nums; }
+.cascade-list { display: flex; flex-direction: column; gap: 5px; }
+.cascade-item { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+    display: flex; align-items: center; justify-content: space-between; font-family: var(--mono); font-size: 11.5px; }
+.cascade-item.target { border-color: var(--ok); background: var(--ok-dim); }
+.cascade-item.cooling { border-color: var(--warn); background: var(--warn-dim); }
+.cascade-item.limit { border-color: var(--danger); background: var(--danger-dim); }
+.cascade-item.disabled { opacity: 0.4; border-style: dashed; }
+.cascade-name { font-weight: 500; }
+.cascade-name.dim { color: var(--text-faint); font-weight: 400; }
+.fallback-note { font-size: 10px; color: var(--warn); padding-left: 12px; margin-top: -2px; font-family: var(--sans); }
+.key-pool-list { display: flex; flex-direction: column; gap: 4px; max-height: 100px; overflow-y: auto; font-size: 11px; font-family: var(--mono); }
+.key-pool-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elevated); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); }
+.key-pool-empty { color: var(--text-faint); font-size: 11px; text-align: center; font-family: var(--sans); }
+
+/* ---- Sparkline ---- */
+.spark-wrap { position: relative; }
+#sparkline-svg { width: 100%; height: 130px; display: block; }
+.spark-grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispEdges; }
+.spark-axis { fill: var(--text-faint); font-size: 9px; font-family: var(--mono); }
+.spark-area { fill: var(--accent-dim); stroke: none; }
+.spark-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spark-dot { fill: var(--accent); }
+.spark-hit { cursor: crosshair; }
+.spark-empty { color: var(--text-faint); text-align: center; padding: 40px 16px; font-size: 12.5px; }
+.spark-legend { display: flex; gap: 16px; font-size: 11px; color: var(--text-dim); padding: 0 16px 12px; }
+.spark-legend-swatch { display: inline-block; width: 10px; height: 2px; background: var(--accent); margin-right: 5px; vertical-align: middle; }
+
+/* ---- Event feed ---- */
+.event-list { list-style: none; max-height: 280px; overflow-y: auto; }
+.event-item { display: flex; align-items: baseline; gap: 9px; padding: 7px 16px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.event-list li:last-child { border-bottom: none; }
+.event-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; position: relative; top: 3px; }
+.event-dot.ok { background: var(--ok); }
+.event-dot.warn { background: var(--warn); }
+.event-dot.danger { background: var(--danger); }
+.event-dot.dim { background: var(--text-faint); }
+.event-dot.accent { background: var(--accent); }
+.event-msg { flex: 1; color: var(--text); word-break: break-word; }
+.event-time { color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.event-empty { padding: 18px 16px; color: var(--text-faint); text-align: center; list-style: none; }
+
+/* ---- Log tail ---- */
+.log-tail summary { cursor: pointer; padding: 12px 16px; font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
+.log-tail summary::-webkit-details-marker { display: none; }
+.log-tail summary::before { content: ''; width: 0; height: 0; border-left: 5px solid var(--text-faint); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    transition: transform 150ms var(--ease); }
+.log-tail[open] summary::before { transform: rotate(90deg); }
+.log-tail-body { border-top: 1px solid var(--border); padding: 12px 16px; }
+.log-content { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: var(--mono);
+    font-size: 11px; line-height: 1.6; color: var(--text-dim); max-height: 280px; overflow-y: auto; overflow-x: auto; white-space: pre; }
+
+footer { text-align: center; color: var(--text-faint); font-size: 11px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+    <div id="admin-notice" class="notice" hidden>
+        Admin token required — open the dashboard with <code>?token=YOUR_TOKEN</code>.
+    </div>
+
+    <header>
+        <div class="title-group">
+            <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 11-13h-7l1-7z"/></svg></span>
+            <div>
+                <h1>Gemini Failover Proxy</h1>
+                <div class="subtitle">OpenCode local gateway · <span id="host-label"></span></div>
+            </div>
+        </div>
+        <span class="status-badge ok" id="status-badge"><span class="live-dot ok" id="status-dot"></span><span id="status-text">Healthy</span></span>
+    </header>
+
+    <div class="kpi-row">
+        <div class="kpi"><div class="kpi-title">Requests</div><div class="kpi-value" id="kpi-requests">0</div></div>
+        <div class="kpi"><div class="kpi-title">Success rate</div><div class="kpi-value" id="kpi-success-rate">100%</div></div>
+        <div class="kpi"><div class="kpi-title">Active keys</div><div class="kpi-value" id="kpi-keys">0</div></div>
+        <div class="kpi"><div class="kpi-title">In flight</div><div class="kpi-value" id="kpi-inflight">0</div></div>
+        <div class="kpi"><div class="kpi-title">Uptime</div><div class="kpi-value small" id="kpi-uptime">0m 0s</div></div>
+    </div>
+
+    <section class="panel">
+        <div class="panel-header">
+            <span>Live routing pipeline</span>
+            <span class="count" style="display:flex; align-items:center; gap:6px;"><span class="live-dot ok"></span> active cascade</span>
+        </div>
+        <div class="flow-body">
+            <div class="flow-stage">
+                <div>
+                    <div class="flow-stage-title"><span>1 · Client &amp; gateway</span></div>
+                    <div style="font-size:13px; font-weight:600; margin-top:6px;">OpenCode client</div>
+                    <div style="font-size:11px; color:var(--text-faint); font-family:var(--mono); margin-top:2px;">POST /v1/chat/completions</div>
+                </div>
+                <div style="border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:4px;">
+                    <div class="flow-stat-row"><span>In-flight</span><strong id="pipe-inflight" style="color:var(--accent);">0/4</strong></div>
+                    <div class="flow-stat-row"><span>Tokens</span><strong id="pipe-tokens" style="color:var(--ok);">1/1</strong></div>
+                </div>
+            </div>
+            <div class="flow-stage" style="flex:1;">
+                <div class="flow-stage-title">
+                    <span>2 · Priority cascade ladder</span>
+                    <span id="pipe-cascade-count" style="font-weight:500; font-size:10px; color:var(--text-faint); text-transform:none; letter-spacing:0;"></span>
+                </div>
+                <div class="cascade-list" id="pipeline-cascade-list"></div>
+            </div>
+            <div class="flow-stage">
+                <div>
+                    <div class="flow-stage-title"><span>3 · Round-robin &amp; upstream</span></div>
+                    <div style="font-size:12px; font-weight:600; margin:6px 0;">API key pool</div>
+                    <div class="key-pool-list" id="pipeline-keys-list"></div>
+                </div>
+                <div style="border-top:1px solid var(--border); padding-top:8px;">
+                    <div style="font-size:10px; font-weight:650; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:2px;">Upstream</div>
+                    <div style="font-size:12px; font-family:var(--mono); color:var(--ok); font-weight:650;">Google AI Studio</div>
+                    <div style="font-size:10.5px; color:var(--text-faint); margin-top:2px;">True SSE stream relay</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">Requests / minute — last 60 min <span class="count" id="spark-count"></span></div>
+        <div class="spark-wrap">
+            <svg id="sparkline-svg" viewBox="0 0 600 120" preserveAspectRatio="none" role="img" aria-labelledby="spark-title"></svg>
+            <div class="spark-empty" id="sparkline-empty" hidden>No traffic yet — this chart fills in as requests come through.</div>
+        </div>
+        <div class="spark-legend" id="spark-legend" hidden><span><span class="spark-legend-swatch"></span>requests/min — hover a point for ok count and avg latency</span></div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">Models <span class="count" id="models-count"></span>
+            <button type="button" class="btn-ghost" id="refresh-models-btn" style="margin-left:auto;">Refresh from Google</button>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th class="chk-col"></th><th>Model</th><th>Status</th><th>Today</th><th>Attempts</th><th>OK</th><th>Avg latency</th><th></th></tr></thead>
+                <tbody id="models-tbody"></tbody>
+            </table>
+        </div>
+        <form id="add-model-form" class="inline-form">
+            <input id="add-model-input" type="text" placeholder="Add a model ID (e.g. a pro-tier model your plan grants access to)…" autocomplete="off" spellcheck="false">
+            <button type="submit">Add model</button>
+        </form>
+        <div class="form-footer"><div class="form-error" id="model-error"></div></div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">API keys <span class="count" id="keys-count"></span></div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Key</th><th>Status</th><th>Today</th><th>Attempts</th><th>OK</th><th>Avg latency</th><th></th></tr></thead>
+                <tbody id="keys-tbody"></tbody>
+            </table>
+        </div>
+        <form id="add-key-form" class="inline-form">
+            <input id="add-key-input" type="password" placeholder="Paste a new Google AI Studio API key…" autocomplete="off" spellcheck="false">
+            <button type="submit">Add key</button>
+        </form>
+        <div class="form-footer">
+            <div class="form-error" id="key-error"></div>
+            <a class="text-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free API key on Google AI Studio
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>
+            </a>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">Live events <span class="count" id="event-count"></span></div>
+        <ul class="event-list" id="event-feed-list"></ul>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">Request history <span class="count" id="history-count"></span></div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Time</th><th>Model</th><th>Key</th><th>Latency</th><th>Tokens</th><th>Outcome</th></tr></thead>
+                <tbody id="request-history-tbody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <details class="panel log-tail" id="log-tail">
+        <summary>Log tail <span class="count">proxy.log, last 200 lines</span></summary>
+        <div class="log-tail-body">
+            <pre class="log-content" id="log-tail-content">Not loaded — open this panel to fetch it.</pre>
+        </div>
+    </details>
+
+    <footer>Auto-refreshing every 2s · <span id="conn-status">connecting…</span></footer>
+</div>
+<script>
+(function () {
+'use strict';
+
+/* ---- helpers ---- */
+var qs = function (id) { return document.getElementById(id); };
+var escapeHtml = function (s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+};
+var fmtDuration = function (s) {
+    if (s == null) return '?';
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+};
+var fmtRelTime = function (ts) {
+    var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + 'm ago';
+    return Math.round(m / 60) + 'h ago';
+};
+var cell = function (row, field) { return row ? row[field] : 0; };
+
+/* ---- URL params: admin token, demo mode, forced theme ---- */
+var params = new URLSearchParams(location.search);
+var isDemo = params.get('demo') === '1';
+var themeOverride = params.get('theme');
+if (themeOverride === 'light' || themeOverride === 'dark') document.documentElement.setAttribute('data-theme', themeOverride);
+
+var adminToken = '';
+(function initToken() {
+    var t = params.get('token');
+    if (t) {
+        try { sessionStorage.setItem('proxyAdminToken', t); } catch (e) {}
+        adminToken = t;
+        params.delete('token');
+        var qsStr = params.toString();
+        history.replaceState({}, '', location.pathname + (qsStr ? '?' + qsStr : '') + location.hash);
+    } else {
+        try { adminToken = sessionStorage.getItem('proxyAdminToken') || ''; } catch (e) { adminToken = ''; }
+    }
+})();
+
+function showAuthNotice() { qs('admin-notice').hidden = false; }
+
+function authFetch(url, opts) {
+    opts = opts || {};
+    var headers = {};
+    for (var k in (opts.headers || {})) headers[k] = opts.headers[k];
+    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+    opts.headers = headers;
+    return fetch(url, opts).then(function (res) {
+        if (res.status === 401) showAuthNotice();
+        return res;
+    });
+}
+
+qs('host-label').textContent = location.host;
+
+/* ------------------------------------------------------------------ */
+/* Status badge                                                       */
+/* ------------------------------------------------------------------ */
+function setStatusBadge(kind, text) {
+    var badge = qs('status-badge'), dot = qs('status-dot');
+    badge.className = 'status-badge ' + kind;
+    dot.className = 'live-dot ' + (kind === 'ok' ? 'ok' : 'warn');
+    qs('status-text').textContent = text;
+}
+function renderStatusBadge(metrics) {
+    var cooling = (metrics.models || []).filter(function (m) { return m.cooling; }).length;
+    if (cooling > 0) setStatusBadge('degraded', 'Degraded — ' + cooling + ' cooling');
+    else setStatusBadge('ok', 'Healthy');
+}
+
+/* ------------------------------------------------------------------ */
+/* KPIs                                                                */
+/* ------------------------------------------------------------------ */
+function setKpi(id, value) {
+    var el = qs(id);
+    if (el.textContent === value) return;
+    el.textContent = value;
+    el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
+}
+function renderKpis(config, metrics) {
+    setKpi('kpi-requests', String(metrics.totals.requests));
+    setKpi('kpi-success-rate', (metrics.totals.requests > 0 ? Math.round((metrics.totals.ok / metrics.totals.requests) * 100) : 100) + '%');
+    setKpi('kpi-keys', String(config.keys.length));
+    setKpi('kpi-inflight', metrics.bucket.in_flight + '/' + metrics.bucket.max_concurrent);
+    setKpi('kpi-uptime', Math.floor(metrics.uptime_s / 60) + 'm ' + (metrics.uptime_s % 60) + 's');
+}
+
+/* ------------------------------------------------------------------ */
+/* Quota bar — shared by the models and keys tables                    */
+/* ------------------------------------------------------------------ */
+function quotaBar(requestsToday, dailyLimit, etaMin) {
+    if (dailyLimit == null) {
+        return '<div class="quota" title="Limit not learned yet — the proxy only discovers it after a daily-quota rejection.">' +
+            '<span class="quota-label">' + requestsToday + '</span></div>';
+    }
+    var pct = dailyLimit > 0 ? Math.min(100, (requestsToday / dailyLimit) * 100) : 100;
+    var cls = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '';
+    var eta = etaMin != null ? '<span class="quota-eta">~' + fmtDuration(etaMin * 60) + ' left at current pace</span>' : '';
+    return '<div class="quota">' +
+        '<div class="quota-bar"><div class="quota-fill ' + cls + '" style="width:' + pct.toFixed(0) + '%"></div></div>' +
+        '<span class="quota-label">' + requestsToday + '/' + dailyLimit + eta + '</span></div>';
+}
+
+/* ------------------------------------------------------------------ */
+/* Models / keys tables                                               */
+/* ------------------------------------------------------------------ */
+function statusBadge(row) {
+    if (!row) return '<span class="badge off">disabled</span>';
+    if (row.daily_limited) return '<span class="badge limit">daily limit — resets in ' + fmtDuration(row.resets_in_s) + '</span>';
+    return row.cooling ? '<span class="badge cooling">cooling ' + row.retry_in_s + 's</span>' : '<span class="badge active">active</span>';
+}
+
+function renderModels(config, metrics) {
+    var byName = {};
+    (metrics.models || []).forEach(function (m) { byName[m.model] = m; });
+    var forecastByModel = {};
+    (metrics.forecast || []).forEach(function (f) { forecastByModel[f.model] = f; });
+    var discoveredSet = {};
+    (config.discoveredModels || []).forEach(function (id) { discoveredSet[id] = true; });
+    var unlistedSet = {};
+    (config.unlistedModels || []).forEach(function (id) { unlistedSet[id] = true; });
+    qs('models-count').textContent = config.enabledModels.length + '/' + config.allModels.length;
+    qs('models-tbody').innerHTML = config.allModels.map(function (name) {
+        var m = byName[name];
+        var enabled = config.enabledModels.indexOf(name) !== -1;
+        var checked = enabled ? 'checked' : '';
+        var custom = config.defaultModels.indexOf(name) === -1;
+        var removeCell = custom ? '<button class="btn-ghost" data-name="' + escapeHtml(name) + '">Remove</button>' : '';
+        var f = forecastByModel[name];
+        var quota = quotaBar(m ? m.requests_today : 0, m ? m.daily_limit : null, f ? f.eta_min : null);
+        var extraBadges = '';
+        if (discoveredSet[name] && !enabled) extraBadges += ' <span class="badge new">new</span>';
+        if (unlistedSet[name]) extraBadges += ' <span class="badge cooling">unlisted</span>';
+        return '<tr><td class="chk-col"><input type="checkbox" class="model-toggle" value="' + escapeHtml(name) + '" ' + checked + '></td>' +
+            '<td class="name">' + escapeHtml(name) + extraBadges + '</td><td>' + statusBadge(m) + '</td><td>' + quota +
+            '</td><td class="num">' + cell(m, 'attempts') + '</td><td class="num">' + cell(m, 'ok') +
+            '</td><td class="num">' + (cell(m, 'avg_latency_ms') || '-') + 'ms</td><td>' + removeCell + '</td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('.model-toggle'), function (box) { box.addEventListener('change', onModelToggle); });
+    Array.prototype.forEach.call(document.querySelectorAll('#models-tbody .btn-ghost'), function (btn) { btn.addEventListener('click', onRemoveModel); });
+}
+
+function renderKeys(config, metrics) {
+    var metricsKeys = metrics.keys || [];
+    qs('keys-count').textContent = config.keys.length;
+    qs('keys-tbody').innerHTML = config.keys.map(function (k, i) {
+        var m = metricsKeys[i];
+        var removeDisabled = config.keys.length <= 1 ? 'disabled title="At least one key is required"' : '';
+        var quota = quotaBar(k.requests_today, null, null);
+        return '<tr><td class="name">key#' + k.id + ' (' + escapeHtml(k.masked) + ')</td><td>' +
+            statusBadge({ cooling: k.cooling, retry_in_s: m ? m.retry_in_s : 0, daily_limited: k.daily_limited, resets_in_s: k.resets_in_s }) +
+            '</td><td>' + quota + '</td><td class="num">' + cell(m, 'attempts') + '</td><td class="num">' + cell(m, 'ok') +
+            '</td><td class="num">' + (cell(m, 'avg_latency_ms') || '-') + 'ms</td>' +
+            '<td><button class="btn-ghost" data-id="' + k.id + '" ' + removeDisabled + '>Remove</button></td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('#keys-tbody .btn-ghost'), function (btn) { btn.addEventListener('click', onRemoveKey); });
+}
+
+/* ------------------------------------------------------------------ */
+/* Pipeline / cascade visualizer                                      */
+/* ------------------------------------------------------------------ */
+function renderPipeline(config, metrics) {
+    qs('pipe-inflight').textContent = metrics.bucket.in_flight + '/' + metrics.bucket.max_concurrent;
+    qs('pipe-tokens').textContent = (Math.round(metrics.bucket.tokens * 10) / 10) + '/' + metrics.bucket.max_concurrent;
+
+    var enabledSet = {};
+    (config.enabledModels || []).forEach(function (m) { enabledSet[m] = true; });
+    var byName = {};
+    (metrics.models || []).forEach(function (m) { byName[m.model] = m; });
+
+    var targetFound = false;
+    var items = config.allModels.map(function (name) {
+        var enabled = !!enabledSet[name];
+        var m = byName[name];
+        var cooling = m && m.cooling;
+        var limit = m && m.daily_limited;
+        var stateClass = '', isTarget = false;
+        if (!enabled) stateClass = 'disabled';
+        else if (limit) stateClass = 'limit';
+        else if (cooling) stateClass = 'cooling';
+        else if (!targetFound) { isTarget = true; stateClass = 'target'; targetFound = true; }
+        return { name: name, enabled: enabled, cooling: cooling, limit: limit, stateClass: stateClass, isTarget: isTarget, m: m };
+    });
+
+    qs('pipe-cascade-count').textContent = config.enabledModels.length + ' active';
+
+    qs('pipeline-cascade-list').innerHTML = items.map(function (item) {
+        var badgeHtml;
+        if (!item.enabled) badgeHtml = '<span class="badge off">off</span>';
+        else if (item.limit) badgeHtml = '<span class="badge limit">limited</span>';
+        else if (item.cooling) badgeHtml = '<span class="badge cooling">' + item.m.retry_in_s + 's</span>';
+        else if (item.isTarget) badgeHtml = '<span class="badge active">target</span>';
+        else badgeHtml = '<span class="badge active">ready</span>';
+        var fallback = (item.enabled && (item.cooling || item.limit)) ? '<div class="fallback-note">Failover to next on 429</div>' : '';
+        return '<div class="cascade-item ' + item.stateClass + '">' +
+            '<span class="cascade-name' + (item.enabled ? '' : ' dim') + '">' + escapeHtml(item.name) + '</span>' + badgeHtml + '</div>' + fallback;
+    }).join('');
+
+    var keysHtml = config.keys.map(function (k, i) {
+        var m = (metrics.keys || [])[i];
+        var isCooling = k.cooling || (m && m.retry_in_s > 0);
+        var isLimit = k.daily_limited;
+        var cls = isLimit ? 'danger' : isCooling ? 'warn' : 'ok';
+        var label = isLimit ? 'Limit' : isCooling ? ((m ? m.retry_in_s + 's' : 'Cooling')) : 'Active';
+        return '<div class="key-pool-row"><span>key#' + k.id + ' (' + escapeHtml(k.masked) + ')</span>' +
+            '<span style="color:var(--' + cls + '); font-weight:650; font-size:10.5px;">' + label + '</span></div>';
+    }).join('');
+    qs('pipeline-keys-list').innerHTML = keysHtml || '<div class="key-pool-empty">No keys configured</div>';
+}
+
+/* ------------------------------------------------------------------ */
+/* Sparkline — 60-minute requests/min, latency & ok count on hover     */
+/* ------------------------------------------------------------------ */
+function renderSparkline(history) {
+    var svg = qs('sparkline-svg'), empty = qs('sparkline-empty'), legend = qs('spark-legend');
+    history = history || [];
+    qs('spark-count').textContent = history.length ? history.length + ' min of data' : '';
+    if (!history.length) { svg.hidden = true; empty.hidden = false; legend.hidden = true; return; }
+    empty.hidden = true; svg.hidden = false; legend.hidden = false;
+
+    var W = 600, H = 120, PAD_X = 26, PAD_Y = 14;
+    var n = history.length;
+    var maxReq = Math.max(1, Math.max.apply(null, history.map(function (b) { return b.requests; })));
+    var x = function (i) { return n <= 1 ? PAD_X : PAD_X + (i * (W - PAD_X * 2)) / (n - 1); };
+    var y = function (v) { return H - PAD_Y - (v / maxReq) * (H - PAD_Y * 2); };
+    var pts = history.map(function (b, i) { return [x(i), y(b.requests)]; });
+    var linePath = pts.map(function (p, i) { return (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ');
+    var areaPath = linePath + ' L' + x(n - 1).toFixed(1) + ',' + (H - PAD_Y).toFixed(1) + ' L' + x(0).toFixed(1) + ',' + (H - PAD_Y).toFixed(1) + ' Z';
+    var bucketW = n > 1 ? (W - PAD_X * 2) / (n - 1) : (W - PAD_X * 2);
+
+    var hits = history.map(function (b, i) {
+        var cx = x(i), cy = y(b.requests);
+        var avgLat = b.ok ? Math.round(b.latency_ms_sum / b.ok) : null;
+        var label = new Date(b.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        var tip = label + ' — ' + b.requests + ' req, ' + b.ok + ' ok' + (avgLat ? ', ' + avgLat + 'ms avg latency' : '');
+        return '<rect class="spark-hit" x="' + (cx - bucketW / 2).toFixed(1) + '" y="0" width="' + bucketW.toFixed(1) + '" height="' + H + '" fill="transparent"><title>' + escapeHtml(tip) + '</title></rect>' +
+            '<circle class="spark-dot" cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="2.4"><title>' + escapeHtml(tip) + '</title></circle>';
+    }).join('');
+
+    svg.innerHTML =
+        '<title id="spark-title">Requests per minute, last ' + n + ' minutes</title>' +
+        '<line class="spark-grid" x1="' + PAD_X + '" y1="' + (H - PAD_Y) + '" x2="' + (W - PAD_X) + '" y2="' + (H - PAD_Y) + '"/>' +
+        '<line class="spark-grid" x1="' + PAD_X + '" y1="' + PAD_Y + '" x2="' + (W - PAD_X) + '" y2="' + PAD_Y + '"/>' +
+        '<text class="spark-axis" x="2" y="' + (H - PAD_Y + 3) + '">0</text>' +
+        '<text class="spark-axis" x="2" y="' + (PAD_Y + 3) + '">' + maxReq + '/min</text>' +
+        '<path class="spark-area" d="' + areaPath + '"></path>' +
+        '<path class="spark-line" d="' + linePath + '"></path>' +
+        hits;
+}
+
+/* ------------------------------------------------------------------ */
+/* Live events + request history (both derived from the SSE stream)    */
+/* ------------------------------------------------------------------ */
+var events = []; // ring, newest last, capped
+function pushEvent(e) { events.push(e); if (events.length > 200) events.shift(); }
+
+function eventMeta(type) {
+    switch (type) {
+        case 'request_done': return 'ok';
+        case 'request_failed': case 'quota_daily': case 'key_rejected': return 'danger';
+        case 'model_switch': case 'slow_response': case 'waiting': return 'warn';
+        case 'models_discovered': return 'accent';
+        default: return 'dim';
+    }
+}
+
+function renderEventFeed() {
+    var list = qs('event-feed-list');
+    var items = events.slice(-50).slice().reverse();
+    qs('event-count').textContent = items.length ? 'last ' + items.length : '';
+    if (!items.length) { list.innerHTML = '<li class="event-empty">No events yet — waiting for the first request.</li>'; return; }
+    list.innerHTML = items.map(function (e) {
+        return '<li class="event-item"><span class="event-dot ' + eventMeta(e.type) + '"></span>' +
+            '<span class="event-msg">' + escapeHtml(e.msg || e.type) + '</span>' +
+            '<span class="event-time" title="' + escapeHtml(new Date(e.ts).toLocaleString()) + '">' + fmtRelTime(e.ts) + '</span></li>';
+    }).join('');
+}
+
+function renderRequestHistory() {
+    var tbody = qs('request-history-tbody');
+    var rows = events.filter(function (e) { return e.type === 'request_done' || e.type === 'request_failed'; }).slice(-50).slice().reverse();
+    qs('history-count').textContent = rows.length ? 'last ' + rows.length : '';
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="table-empty">No completed requests yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(function (e) {
+        var time = new Date(e.ts).toLocaleTimeString();
+        var outcome = e.type === 'request_done'
+            ? '<span class="badge active">ok</span>'
+            : '<span class="badge limit">failed' + (e.status ? ' ' + e.status : '') + '</span>';
+        var tokens = e.tokens && e.tokens.total != null ? e.tokens.total : '-';
+        return '<tr><td class="num">' + time + '</td><td class="name">' + escapeHtml(e.model || '-') + '</td>' +
+            '<td class="num">' + (e.keyId ? '#' + e.keyId : '-') + '</td>' +
+            '<td class="num">' + (e.latencyMs != null ? Math.round(e.latencyMs) + 'ms' : '-') + '</td>' +
+            '<td class="num">' + tokens + '</td><td>' + outcome + '</td></tr>';
+    }).join('');
+}
+
+/* ------------------------------------------------------------------ */
+/* Log tail — fetches on open and every 5s while open                  */
+/* ------------------------------------------------------------------ */
+var logInterval = null;
+var DEMO_LOG = [
+    '[demo] this is a synthetic log — start the proxy for real output',
+    '[demo] request: model=gemini-3.8-flash stream=true msgs=3',
+    '[demo] cooldown gemini-3.6-flash for 42s (failure #1)',
+];
+function scrollLogBottom() { var el = qs('log-tail-content'); el.scrollTop = el.scrollHeight; }
+function fetchLogs() {
+    if (isDemo) { qs('log-tail-content').textContent = DEMO_LOG.join('\n'); scrollLogBottom(); return; }
+    authFetch('/api/logs?n=200').then(function (res) {
+        if (!res.ok) { qs('log-tail-content').textContent = 'Could not load logs (HTTP ' + res.status + ').'; return; }
+        return res.text().then(function (text) { qs('log-tail-content').textContent = text || '(log is empty)'; scrollLogBottom(); });
+    }).catch(function () { qs('log-tail-content').textContent = 'Could not load logs.'; });
+}
+qs('log-tail').addEventListener('toggle', function () {
+    if (this.open) { fetchLogs(); logInterval = setInterval(fetchLogs, 5000); }
+    else { clearInterval(logInterval); logInterval = null; }
+});
+
+/* ------------------------------------------------------------------ */
+/* Forms                                                               */
+/* ------------------------------------------------------------------ */
+function withLoading(button, busyText, task) {
+    var original = button.textContent;
+    button.disabled = true; button.textContent = busyText;
+    return task().finally(function () { button.disabled = false; button.textContent = original; });
+}
+
+function onModelToggle() {
+    var models = Array.prototype.map.call(document.querySelectorAll('.model-toggle:checked'), function (b) { return b.value; });
+    if (!models.length) { this.checked = true; alert('At least one model must stay enabled.'); return; }
+    authFetch('/api/models', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ models: models }) }).then(refreshOnce);
+}
+function onRemoveKey() {
+    if (!confirm('Remove this key?')) return;
+    authFetch('/api/keys/' + this.dataset.id, { method: 'DELETE' }).then(function (res) {
+        if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) { alert(e.error || 'Could not remove key'); });
+    }).then(refreshOnce);
+}
+function onRemoveModel() {
+    if (!confirm('Remove "' + this.dataset.name + '" from the catalog?')) return;
+    authFetch('/api/models/' + encodeURIComponent(this.dataset.name), { method: 'DELETE' }).then(function (res) {
+        if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) { alert(e.error || 'Could not remove model'); });
+    }).then(refreshOnce);
+}
+
+qs('add-key-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var input = qs('add-key-input'), errBox = qs('key-error');
+    errBox.textContent = '';
+    withLoading(e.submitter, 'Adding…', function () {
+        return authFetch('/api/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: input.value }) })
+            .then(function (res) {
+                if (res.ok) { input.value = ''; return refreshOnce(); }
+                return res.json().catch(function () { return {}; }).then(function (e2) { errBox.textContent = e2.error || 'Could not add key'; });
+            });
+    });
+});
+
+qs('refresh-models-btn').addEventListener('click', function () {
+    var btn = this;
+    withLoading(btn, 'Refreshing…', function () {
+        return authFetch('/api/models/discover', { method: 'POST' })
+            .then(function (res) {
+                if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) { alert(e.error || 'Could not refresh models'); });
+                return refreshOnce();
+            });
+    });
+});
+
+qs('add-model-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var input = qs('add-model-input'), errBox = qs('model-error');
+    errBox.textContent = '';
+    withLoading(e.submitter, 'Adding…', function () {
+        return authFetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: input.value.trim() }) })
+            .then(function (res) {
+                if (res.ok) { input.value = ''; return refreshOnce(); }
+                return res.json().catch(function () { return {}; }).then(function (e2) { errBox.textContent = e2.error || 'Could not add model'; });
+            });
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Demo mode — one function builds a synthetic /metrics + /api/config  */
+/* snapshot plus a fake event generator, so screenshots and a future   */
+/* landing page can show a populated dashboard with no live server.    */
+/* ------------------------------------------------------------------ */
+function buildDemoData() {
+    var now = Date.now();
+    var modelNames = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-custom', 'gemini-4.0-flash'];
+    var keys = [1, 2, 3].map(function (id) { return { id: id, masked: '...' + String(1000 + id * 137).slice(-4) }; });
+
+    var config = {
+        allModels: modelNames,
+        defaultModels: modelNames.slice(0, 5),
+        enabledModels: modelNames.slice(0, 4),
+        discoveredModels: ['gemini-4.0-flash'], // discovered, unchecked -> "new" badge
+        unlistedModels: ['gemini-3.6-flash'],   // still enabled, Google stopped listing it -> "unlisted" badge
+        keys: keys.map(function (k, i) {
+            return { id: k.id, masked: k.masked, cooling: i === 1, daily_limited: false, requests_today: 40 + i * 37, resets_in_s: null };
+        }),
+    };
+
+    var history = [];
+    for (var i = 59; i >= 0; i--) {
+        var requests = Math.max(0, Math.round(3 + Math.sin(i / 6) * 2 + Math.random() * 2));
+        var ok = Math.max(0, requests - (Math.random() < 0.1 ? 1 : 0));
+        history.push({ ts: now - i * 60000, requests: requests, ok: ok, errors: requests - ok, latency_ms_sum: ok * (700 + Math.round(Math.random() * 400)) });
+    }
+    history = history.filter(function (b) { return b.requests > 0; });
+
+    var metrics = {
+        uptime_s: 5423,
+        totals: { requests: 812, ok: 793, tokens: { prompt: 512000, completion: 128000, total: 640000 } },
+        bucket: { tokens: 0.8, refill_per_min: 20, in_flight: 1, max_concurrent: 2 },
+        history: history,
+        forecast: [{ model: modelNames[0], requests_today: 210, daily_limit: 250, eta_min: 118 }],
+        keys: keys.map(function (k, i) {
+            return {
+                key: 'key#' + k.id, attempts: 300 + i * 10, ok: 290 + i * 9, cooldowns: i, attempt_errors: 1,
+                avg_latency_ms: 820 + i * 40, last_ok_ago_s: 12, cooling: i === 1, retry_in_s: i === 1 ? 34 : 0,
+                tokens: { prompt: 100000, completion: 30000, total: 130000 }, tokens_today: 12000 + i * 500,
+            };
+        }),
+        models: modelNames.slice(0, 4).map(function (m, i) {
+            return {
+                model: m, attempts: 200 - i * 20, ok: 195 - i * 20, cooldowns: i === 2 ? 3 : 0, attempt_errors: 1,
+                avg_latency_ms: 700 + i * 60, last_ok_ago_s: 8, cooling: i === 2, retry_in_s: i === 2 ? 27 : 0,
+                daily_limited: false, resets_in_s: null,
+                requests_today: 210 - i * 30, daily_limit: i === 0 ? 250 : null,
+                tokens: { prompt: 90000, completion: 20000, total: 110000 }, tokens_today: 15000 - i * 1000,
+            };
+        }),
+    };
+
+    var templates = [
+        function () { return { type: 'request_done', model: modelNames[0], keyId: 1, latencyMs: 900 + Math.round(Math.random() * 400), requestsToday: 210, msg: 'Answered by ' + modelNames[0] + ' in 1.1s via key #1 (210 requests today)' }; },
+        function () { return { type: 'model_switch', from: modelNames[2], to: modelNames[1], reason: 'rate_limit', msg: modelNames[2] + ' rate-limited (per-minute), trying ' + modelNames[1] }; },
+        function () { return { type: 'slow_response', model: modelNames[1], keyId: 2, msg: modelNames[1] + ' is slow to respond (5s, key #2)…' }; },
+        function () { return { type: 'request_done', model: modelNames[1], keyId: 2, latencyMs: 1400, requestsToday: 88, msg: 'Answered by ' + modelNames[1] + ' in 1.4s via key #2 (88 requests today)' }; },
+        function () { return { type: 'request_failed', status: 429, msg: 'All Gemini models are currently rate-limited (free-tier worker limit). Try again in a few seconds.' }; },
+        function () { return { type: 'models_discovered', added: ['gemini-4.0-flash'], removed: [], msg: 'New Gemini models available: gemini-4.0-flash. Enable them in the dashboard at http://localhost:8085' }; },
+    ];
+    var n = 0;
+    function nextFakeEvent() { var b = templates[n % templates.length](); n++; return Object.assign({ ts: Date.now() }, b); }
+
+    return { metrics: metrics, config: config, nextFakeEvent: nextFakeEvent };
+}
+
+/* ------------------------------------------------------------------ */
+/* Boot                                                                */
+/* ------------------------------------------------------------------ */
+var latestMetrics = null, latestConfig = null;
+
+function renderAll() {
+    if (!latestMetrics || !latestConfig) return;
+    renderKpis(latestConfig, latestMetrics);
+    renderStatusBadge(latestMetrics);
+    renderPipeline(latestConfig, latestMetrics);
+    renderModels(latestConfig, latestMetrics);
+    renderKeys(latestConfig, latestMetrics);
+    renderSparkline(latestMetrics.history);
+}
+function renderEvents() { renderEventFeed(); renderRequestHistory(); }
+
+var refreshOnce; // set below, per mode
+
+if (isDemo) {
+    qs('conn-status').textContent = 'demo mode';
+    var demo = buildDemoData();
+    latestMetrics = demo.metrics; latestConfig = demo.config;
+    for (var di = 12; di >= 0; di--) { var de = demo.nextFakeEvent(); de.ts = Date.now() - di * 15000; pushEvent(de); }
+    refreshOnce = function () { return Promise.resolve(); };
+    renderAll(); renderEvents();
+    setInterval(function () { pushEvent(demo.nextFakeEvent()); renderEvents(); }, 4000);
+    setInterval(renderEvents, 1000);
+} else {
+    refreshOnce = function () {
+        return Promise.all([authFetch('/metrics'), authFetch('/api/config')]).then(function (r) {
+            var mRes = r[0], cRes = r[1];
+            return Promise.all([mRes.ok ? mRes.json() : null, cRes.ok ? cRes.json() : null]).then(function (j) {
+                if (j[0]) latestMetrics = j[0];
+                if (j[1]) latestConfig = j[1];
+                if (j[0] && j[1]) renderAll();
+            });
+        });
+    };
+    refreshOnce();
+    setInterval(refreshOnce, 2000);
+    setInterval(renderEvents, 1000);
+
+    var esUrl = '/api/events' + (adminToken ? '?token=' + encodeURIComponent(adminToken) : '');
+    var es = new EventSource(esUrl);
+    es.onopen = function () { qs('conn-status').textContent = 'live'; };
+    es.onerror = function () { qs('conn-status').textContent = 'reconnecting…'; };
+    es.onmessage = function (msg) {
+        try {
+            var e = JSON.parse(msg.data);
+            pushEvent(e);
+            if (e.type === 'waiting' || e.type === 'quota_daily') setStatusBadge('degraded', e.msg || 'Degraded');
+            renderEvents();
+        } catch (err) { /* ignore malformed event */ }
+    };
+}
+})();
+</script>
+</body>
+</html>

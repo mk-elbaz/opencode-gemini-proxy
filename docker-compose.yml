@@ -1,0 +1,15 @@
+services:
+  proxy:
+    build: .
+    ports:
+      - "127.0.0.1:8085:8085"
+    env_file: .env
+    environment:
+      - PROXY_HOST=0.0.0.0
+    restart: unless-stopped
+    volumes:
+      # .env / usage.json / proxy.log — Dockerfile sets PROXY_DATA_DIR=/app/data.
+      - proxy-data:/app/data
+
+volumes:
+  proxy-data:
