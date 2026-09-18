@@ -3,7 +3,7 @@
 A zero-dependency, OpenAI-compatible failover proxy that sits between OpenCode and Google Gemini AI Studio's free tier, so one 429 doesn't abort your agent run.
 
 [![CI](https://github.com/mk-elbaz/opencode-gemini-proxy/actions/workflows/test.yml/badge.svg)](https://github.com/mk-elbaz/opencode-gemini-proxy/actions/workflows/test.yml)
-<!-- restore after `npm publish`: [![npm version](https://img.shields.io/npm/v/opencode-gemini-proxy)](https://www.npmjs.com/package/opencode-gemini-proxy) -->
+[![npm version](https://img.shields.io/npm/v/opencode-gemini-proxy)](https://www.npmjs.com/package/opencode-gemini-proxy)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 ![node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)
