@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { quotaScope, isDailyQuota, msUntilPacificMidnight, retryDelayMs } from './quota.js';
+import { quotaScope, isDailyQuota, msUntilPacificMidnight, retryDelayMs, learnedLimitFromTrip, quotaDimension } from './quota.js';
 import { addToolCallIndices, correctFinishReason, patchStreamEvent } from './compat.js';
 import { stripProxyStatusLines, pushRing } from './status.js';
 import { resolveDataDir } from './paths.js';
@@ -262,10 +262,23 @@ function requestsTodayForModel(model) {
   return Object.values(usage.counts).reduce((sum, perKey) => sum + (perKey[model] || 0), 0);
 }
 
-// model -> request count it tripped an RPD 429 at last time. Learned, not
-// documented anywhere by Google — survives day rollover (unlike `usage.counts`)
-// so /metrics can forecast against it even before today's first 429.
+// model -> request count it tripped an RPD 429 at last time, for ONE key (RPD
+// is scoped per key/project, not pooled — see learnedLimitFromTrip in
+// quota.js). Learned, not documented anywhere by Google — survives day
+// rollover (unlike `usage.counts`) so /metrics can forecast against it even
+// before today's first 429. /metrics multiplies by activeKeyCount() to show
+// the pooled total.
 let learnedDailyLimit = {};
+
+// model -> tokens-per-minute count it tripped a TPM 429 at last time, for ONE
+// key. Same shape/persistence as learnedDailyLimit.
+let learnedTpm = {};
+
+// Keys not parked as permanently invalid (dead/revoked) — the pool size for
+// turning a per-key learned limit into a pooled one.
+function activeKeyCount() {
+  return keyState.filter(k => !k.invalid).length;
+}
 
 // Sibling to bumpDailyUsage/requestsTodayFor*, same counts[keyId][model] shape,
 // for token usage instead of request counts.
@@ -597,6 +610,37 @@ function historyBumpRequest() { historyBucket().requests++; }
 function historyBumpOk(latencyMs) { const b = historyBucket(); b.ok++; b.latency_ms_sum += latencyMs; }
 function historyBumpError() { historyBucket().errors++; }
 
+/* Per-key, per-model sliding 60s token window — powers tokens_last_minute in
+ * /metrics and TPM-limit learning. In-memory only, same as `history`. */
+const TOKEN_WINDOW_MS = 60000;
+const tokenWindows = new Map(); // `${keyId}:${model}` -> [{ts, tokens}, ...] oldest first
+function pruneTokenWindow(arr, now = Date.now()) {
+  while (arr.length && now - arr[0].ts > TOKEN_WINDOW_MS) arr.shift();
+  return arr;
+}
+function recordTokenWindow(keyId, model, tokens) {
+  if (!tokens) return;
+  const wKey = `${keyId}:${model}`;
+  let arr = tokenWindows.get(wKey);
+  if (!arr) { arr = []; tokenWindows.set(wKey, arr); }
+  arr.push({ ts: Date.now(), tokens });
+  pruneTokenWindow(arr);
+}
+function tokensLastMinute(keyId, model) {
+  const arr = tokenWindows.get(`${keyId}:${model}`);
+  return arr ? pruneTokenWindow(arr).reduce((sum, e) => sum + e.tokens, 0) : 0;
+}
+function tokensLastMinuteForModel(model) {
+  return keyState.reduce((sum, k) => sum + tokensLastMinute(k.id, model), 0);
+}
+function tokensLastMinuteForKey(keyId) {
+  let sum = 0;
+  for (const [wKey, arr] of tokenWindows) {
+    if (wKey.startsWith(`${keyId}:`)) sum += pruneTokenWindow(arr).reduce((s, e) => s + e.tokens, 0);
+  }
+  return sum;
+}
+
 function saveUsage() {
   if (usage.day !== todayPacific()) {
     usage = { day: todayPacific(), counts: {} };
@@ -627,6 +671,7 @@ function saveUsage() {
   }
   usage.keyMetrics = kmObj;
   usage.learnedDailyLimit = learnedDailyLimit;
+  usage.learnedTpm = learnedTpm;
   usage.discoveredModels = [...discoveredModelIds];
   usage.unlistedModels = [...unlistedModelIds];
   usage.lastDiscoveryAt = lastDiscoveryAt;
@@ -646,6 +691,9 @@ function loadUsage() {
       // whether the rest of `raw` is stale.
       if (raw && typeof raw.learnedDailyLimit === 'object' && raw.learnedDailyLimit) {
         learnedDailyLimit = raw.learnedDailyLimit;
+      }
+      if (raw && typeof raw.learnedTpm === 'object' && raw.learnedTpm) {
+        learnedTpm = raw.learnedTpm;
       }
       // Discovered/unlisted catalog state outlives a day rollover too — it's
       // not part of the daily usage counters, just piggybacking on the same file.
@@ -738,18 +786,23 @@ function recordTokens(model, keyIdx, u) {
   totals.completionTokens = (totals.completionTokens || 0) + c;
   totals.totalTokens = (totals.totalTokens || 0) + t;
   bumpDailyTokens(keyState[keyIdx].id, model, { prompt_tokens: p, completion_tokens: c, total_tokens: t });
+  recordTokenWindow(keyState[keyIdx].id, model, t);
   saveUsage();
 }
 
-function markExhausted(model, daily = false, reqId = null, delayMs = null) {
+function markExhausted(model, daily = false, reqId = null, delayMs = null, keyId = null) {
   const s = modelState.get(model) || { until: 0, failures: 0, lastUsedAt: 0 };
   s.failures += 1;
   if (daily) {
     s.until = Date.now() + msUntilPacificMidnight();
-    // Record the request count it tripped at — Google never publishes RPD
-    // limits for AI Studio keys, so this is the only way to learn one.
-    const count = requestsTodayForModel(model);
-    if (count > 0) learnedDailyLimit[model] = count;
+    // Record the request count it tripped at, for the KEY that tripped it —
+    // Google's RPD quota is per key (per project), not pooled, and Google
+    // never publishes the number for AI Studio keys, so this is the only way
+    // to learn one. See learnedLimitFromTrip in quota.js.
+    if (keyId != null) {
+      const count = learnedLimitFromTrip(usage.counts[keyId], model);
+      if (count != null) learnedDailyLimit[model] = count;
+    }
   } else if (delayMs != null) {
     // Honor Google's exact RetryInfo/Retry-After delay over our own guess,
     // still clamped to the same floor/ceiling as the exponential cooldown.
@@ -871,13 +924,21 @@ function markKeyHealthy(idx) {
  * exponential cooldown, so it's parked until the actual Pacific-time daily reset. */
 function coolOnExhaustion(model, keyIdx, parsed, errMsg, reqId, retryAfterHeader = null) {
   const daily = isDailyQuota(parsed, errMsg);
+  const dimension = daily ? 'rpd' : quotaDimension(parsed, errMsg);
   const delayMs = daily ? null : retryDelayMs(parsed, retryAfterHeader);
-  markExhausted(model, daily, reqId, delayMs);
+  const keyId = keyState[keyIdx]?.id ?? null;
+  markExhausted(model, daily, reqId, delayMs, keyId);
+  if (dimension === 'tpm' && keyId != null) {
+    // Same idea as learnedDailyLimit but for tokens-per-minute: record what
+    // this key was actually pushing through in the last 60s when it tripped.
+    const tpm = tokensLastMinute(keyId, model);
+    if (tpm > 0) learnedTpm[model] = tpm;
+  }
   if (quotaScope(parsed, errMsg) === 'key') {
     markKeyExhausted(keyIdx, daily, reqId, delayMs);
     log(`key-wide exhaustion — key#${keyState[keyIdx].id} cooling too`);
   }
-  return daily;
+  return { daily, dimension };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1315,10 +1376,12 @@ const server = http.createServer(async (req, res) => {
     // not per-model throughput; upgrade if forecast accuracy matters.
     const activeSlots = history.filter(b => b.requests > 0);
     const ratePerMin = activeSlots.length ? activeSlots.reduce((sum, b) => sum + b.requests, 0) / activeSlots.length : 0;
+    const activeKeys = activeKeyCount();
     const forecast = Object.entries(learnedDailyLimit).map(([model, dailyLimit]) => {
+      const pooledLimit = dailyLimit * activeKeys;
       const requestsToday = requestsTodayForModel(model);
-      const etaMin = ratePerMin > 0 && requestsToday < dailyLimit ? Math.round((dailyLimit - requestsToday) / ratePerMin) : null;
-      return { model, requests_today: requestsToday, daily_limit: dailyLimit, eta_min: etaMin };
+      const etaMin = ratePerMin > 0 && requestsToday < pooledLimit ? Math.round((pooledLimit - requestsToday) / ratePerMin) : null;
+      return { model, requests_today: requestsToday, daily_limit: dailyLimit, pooled_daily_limit: pooledLimit, eta_min: etaMin };
     });
     sendJson(res, 200, {
       uptime_s: Math.floor((now - STARTED_AT) / 1000),
@@ -1349,12 +1412,15 @@ const server = http.createServer(async (req, res) => {
           retry_in_s: isCooling ? Math.ceil((k.until - now) / 1000) : 0,
           tokens: { prompt: s.promptTokens || 0, completion: s.completionTokens || 0, total: s.totalTokens || 0 },
           tokens_today: tokensTodayForKey(k.id),
+          tokens_last_minute: tokensLastMinuteForKey(k.id),
         };
       }),
       models: GOOGLE_MODELS.map(m => {
         const s = modelMetrics.get(m) || {};
         const st = modelState.get(m) || {};
         const isCooling = !!(st.until && st.until > now);
+        const dailyLimit = learnedDailyLimit[m] ?? null;
+        const tpmLimit = learnedTpm[m] ?? null;
         return {
           model: m,
           attempts: s.attempts || 0,
@@ -1368,7 +1434,11 @@ const server = http.createServer(async (req, res) => {
           daily_limited: !!st.dailyLimited,
           resets_in_s: st.dailyLimited && isCooling ? Math.ceil((st.until - now) / 1000) : null,
           requests_today: requestsTodayForModel(m),
-          daily_limit: learnedDailyLimit[m] ?? null,
+          daily_limit: dailyLimit,
+          pooled_daily_limit: dailyLimit != null ? dailyLimit * activeKeys : null,
+          tpm_limit: tpmLimit,
+          pooled_tpm_limit: tpmLimit != null ? tpmLimit * activeKeys : null,
+          tokens_last_minute: tokensLastMinuteForModel(m),
           tokens: { prompt: s.promptTokens || 0, completion: s.completionTokens || 0, total: s.totalTokens || 0 },
           tokens_today: tokensTodayForModel(m),
         };
@@ -1528,7 +1598,9 @@ const server = http.createServer(async (req, res) => {
 
       if (lastFailed) {
         const phrase = {
-          rate_limit: 'rate-limited (per-minute)', daily: 'hit its daily quota',
+          rate_limit: 'rate-limited (per-minute)',
+          rate_limit_tpm: 'hit its tokens-per-minute limit', rate_limit_rpm: 'hit its requests-per-minute limit',
+          daily: 'hit its daily quota',
           timeout: 'timed out', error: 'errored', forbidden: 'was forbidden (403)',
         }[lastFailed.reason] || 'failed';
         const switchMsg = `${lastFailed.model} ${phrase}, trying ${model}`;
@@ -1614,8 +1686,8 @@ const server = http.createServer(async (req, res) => {
 
         if (exhausted) {
           const retryAfter = upstreamRes.headers.get('retry-after');
-          const daily = coolOnExhaustion(model, keyIdx, parsed, errMsg, reqId, retryAfter);
-          lastFailed = { model, reason: daily ? 'daily' : 'rate_limit' };
+          const { daily, dimension } = coolOnExhaustion(model, keyIdx, parsed, errMsg, reqId, retryAfter);
+          lastFailed = { model, reason: daily ? 'daily' : dimension === 'tpm' ? 'rate_limit_tpm' : dimension === 'rpm' ? 'rate_limit_rpm' : 'rate_limit' };
           log(`exhausted on ${model} (${upstreamRes.status}): ${errMsg.slice(0, 200)} retry-after=${retryAfter}`);
           continue; // rotate with cooldown
         }

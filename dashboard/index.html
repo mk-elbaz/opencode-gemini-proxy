@@ -493,17 +493,35 @@ function renderKpis(config, metrics) {
 /* ------------------------------------------------------------------ */
 /* Quota bar — shared by the models and keys tables                    */
 /* ------------------------------------------------------------------ */
-function quotaBar(requestsToday, dailyLimit, etaMin) {
+function quotaBar(requestsToday, dailyLimit, etaMin, perKeyNote) {
     if (dailyLimit == null) {
         return '<div class="quota" title="Limit not learned yet — the proxy only discovers it after a daily-quota rejection.">' +
             '<span class="quota-label">' + requestsToday + '</span></div>';
     }
     var pct = dailyLimit > 0 ? Math.min(100, (requestsToday / dailyLimit) * 100) : 100;
     var cls = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '';
+    var note = perKeyNote ? ' <span class="quota-eta">' + perKeyNote + '</span>' : '';
     var eta = etaMin != null ? '<span class="quota-eta">~' + fmtDuration(etaMin * 60) + ' left at current pace</span>' : '';
     return '<div class="quota">' +
         '<div class="quota-bar"><div class="quota-fill ' + cls + '" style="width:' + pct.toFixed(0) + '%"></div></div>' +
-        '<span class="quota-label">' + requestsToday + '/' + dailyLimit + eta + '</span></div>';
+        '<span class="quota-label">' + requestsToday + '/' + dailyLimit + note + eta + '</span></div>';
+}
+
+// Fits an int/float per-minute token count into "48k" for the compact TPM bar label.
+function fmtK(n) {
+    if (n == null) return '-';
+    return n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : String(n);
+}
+
+// Second, thinner bar under the RPD one — only rendered once a TPM limit has
+// been learned from a real 429 (see quotaDimension/learnedTpm in server.js).
+function tpmBar(tokensLastMin, pooledTpmLimit) {
+    if (pooledTpmLimit == null) return '';
+    var pct = pooledTpmLimit > 0 ? Math.min(100, (tokensLastMin / pooledTpmLimit) * 100) : 100;
+    var cls = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '';
+    return '<div class="quota" style="margin-top:4px" title="Tokens used in the last 60s vs. the learned tokens-per-minute limit">' +
+        '<div class="quota-bar"><div class="quota-fill ' + cls + '" style="width:' + pct.toFixed(0) + '%"></div></div>' +
+        '<span class="quota-label">' + fmtK(tokensLastMin) + '/' + fmtK(pooledTpmLimit) + ' tok/min</span></div>';
 }
 
 /* ------------------------------------------------------------------ */
@@ -532,7 +550,10 @@ function renderModels(config, metrics) {
         var custom = config.defaultModels.indexOf(name) === -1;
         var removeCell = custom ? '<button class="btn-ghost" data-name="' + escapeHtml(name) + '">Remove</button>' : '';
         var f = forecastByModel[name];
-        var quota = quotaBar(m ? m.requests_today : 0, m ? m.daily_limit : null, f ? f.eta_min : null);
+        var activeKeys = (config.keys || []).length;
+        var perKeyNote = m && m.daily_limit != null && activeKeys > 1 ? '(' + m.daily_limit + ' per key × ' + activeKeys + ')' : '';
+        var quota = quotaBar(m ? m.requests_today : 0, m ? m.pooled_daily_limit : null, f ? f.eta_min : null, perKeyNote) +
+            (m ? tpmBar(m.tokens_last_minute, m.pooled_tpm_limit) : '');
         var extraBadges = '';
         if (discoveredSet[name] && !enabled) extraBadges += ' <span class="badge new">new</span>';
         if (unlistedSet[name]) extraBadges += ' <span class="badge cooling">unlisted</span>';
@@ -819,12 +840,13 @@ function buildDemoData() {
         totals: { requests: 812, ok: 793, tokens: { prompt: 512000, completion: 128000, total: 640000 } },
         bucket: { tokens: 0.8, refill_per_min: 20, in_flight: 1, max_concurrent: 2 },
         history: history,
-        forecast: [{ model: modelNames[0], requests_today: 210, daily_limit: 250, eta_min: 118 }],
+        forecast: [{ model: modelNames[0], requests_today: 210, daily_limit: 250, pooled_daily_limit: 750, eta_min: 118 }],
         keys: keys.map(function (k, i) {
             return {
                 key: 'key#' + k.id, attempts: 300 + i * 10, ok: 290 + i * 9, cooldowns: i, attempt_errors: 1,
                 avg_latency_ms: 820 + i * 40, last_ok_ago_s: 12, cooling: i === 1, retry_in_s: i === 1 ? 34 : 0,
                 tokens: { prompt: 100000, completion: 30000, total: 130000 }, tokens_today: 12000 + i * 500,
+                tokens_last_minute: 8000 + i * 1500,
             };
         }),
         models: modelNames.slice(0, 4).map(function (m, i) {
@@ -832,7 +854,9 @@ function buildDemoData() {
                 model: m, attempts: 200 - i * 20, ok: 195 - i * 20, cooldowns: i === 2 ? 3 : 0, attempt_errors: 1,
                 avg_latency_ms: 700 + i * 60, last_ok_ago_s: 8, cooling: i === 2, retry_in_s: i === 2 ? 27 : 0,
                 daily_limited: false, resets_in_s: null,
-                requests_today: 210 - i * 30, daily_limit: i === 0 ? 250 : null,
+                requests_today: 210 - i * 30, daily_limit: i === 0 ? 250 : null, pooled_daily_limit: i === 0 ? 750 : null,
+                tpm_limit: i === 0 ? 80000 : null, pooled_tpm_limit: i === 0 ? 240000 : null,
+                tokens_last_minute: i === 0 ? 48000 : 0,
                 tokens: { prompt: 90000, completion: 20000, total: 110000 }, tokens_today: 15000 - i * 1000,
             };
         }),

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CONTRIBUTING.md and SECURITY.md.
 - Dynamic model discovery (`discovery.js`, `POST /api/models/discover`, `PROXY_DISCOVERY_HOURS`, `PROXY_AUTO_ENABLE_NEW_MODELS`) — the proxy now notices new or retired Gemini models from Google's own model list instead of relying only on the hardcoded default catalog.
 - Dashboard "Refresh from Google" button, `new`/`unlisted` model badges, and a `models_discovered` event feed entry for model-discovery results.
+- Tokens-per-minute (TPM) 429s are now classified separately from RPD/RPM (`quotaDimension`), learned the same way as daily limits, and surfaced in `/metrics` (`tpm_limit`, `pooled_tpm_limit`, `tokens_last_minute`) and the dashboard.
 
 ### Changed
 
@@ -34,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - `GET /` matched only the bare path, so any query string (e.g. `?demo=1`) 404'd — found while adding `?demo=1`.
+- Learned daily (RPD) limits were computed from the pooled request count across all keys instead of the tripping key's own count, so with N keys the learned limit was inflated ~N×; it's now learned per key and pooled (`pooled_daily_limit`) for display.
 
 ## [1.0.0] - 2025-09-12
 

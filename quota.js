@@ -61,6 +61,35 @@ export function msUntilPacificMidnight(now = new Date()) {
   return 24 * 60 * 60 * 1000 - msSinceLocalMidnight;
 }
 
+/* RPD (requests-per-day) quota is scoped PER KEY (per Google Cloud project),
+ * not summed across the pool — so the count to learn from is the tripping
+ * key's own count for the model, never the pooled total. Pure so it's
+ * testable without touching usage.json/server state. */
+export function learnedLimitFromTrip(countsForKey, model) {
+  const n = countsForKey?.[model] || 0;
+  return n > 0 ? n : null;
+}
+
+/* Which per-minute/per-day dimension a 429 belongs to, so the dashboard and
+ * model_switch messages can say "tokens-per-minute" instead of a generic
+ * "rate-limited". Same details-walking pattern as quotaScope/isDailyQuota. */
+export function quotaDimension(parsed, errMsg) {
+  try {
+    const details = parsed?.error?.details || [];
+    for (const d of details) {
+      const blobs = [d.quotaMetric, d.quotaId,
+        ...(d.violations || []).flatMap(v => [v.quotaMetric, v.quotaId, v.subject])];
+      const text = blobs.filter(Boolean).join(' ');
+      if (!text) continue;
+      if (/PerDay/i.test(text)) return 'rpd';
+      if (/PerMinute/i.test(text) && /token/i.test(text)) return 'tpm';
+      if (/PerMinute/i.test(text) && /request/i.test(text)) return 'rpm';
+    }
+  } catch { /* fall through */ }
+  if (/tokens per minute|input tokens|token count/i.test(errMsg || '')) return 'tpm';
+  return 'unknown';
+}
+
 /* Google's 429 bodies carry the documented RetryInfo detail with the exact
  * wait time it wants ("37s", sometimes fractional "12.5s"), which is far more
  * accurate than our own exponential backoff guess. Falls back to the HTTP

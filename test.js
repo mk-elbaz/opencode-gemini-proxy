@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { quotaScope, isDailyQuota, msUntilPacificMidnight, retryDelayMs } from './quota.js';
+import { quotaScope, isDailyQuota, msUntilPacificMidnight, retryDelayMs, learnedLimitFromTrip, quotaDimension } from './quota.js';
 import { addToolCallIndices, correctFinishReason, patchStreamEvent } from './compat.js';
 import { stripProxyStatusLines, pushRing } from './status.js';
 import { resolveDataDir } from './paths.js';
@@ -95,6 +95,52 @@ test('retryDelayMs: reads fractional seconds and falls back to the Retry-After h
 test('retryDelayMs: returns null when neither source has a delay', () => {
   assert.equal(retryDelayMs(null, null), null);
   assert.equal(retryDelayMs({ error: { details: [] } }, undefined), null);
+});
+
+/* ---- learnedLimitFromTrip: RPD is per-key, not pooled across keys ---- */
+
+test('learnedLimitFromTrip: learns the tripping key\'s own count, not the pool', () => {
+  // 3 evenly-used keys each at 80 requests today (pool total 240) — the real
+  // per-key RPD limit is 80, not 240.
+  assert.equal(learnedLimitFromTrip({ 'gemini-3.8-flash': 80 }, 'gemini-3.8-flash'), 80);
+});
+
+test('learnedLimitFromTrip: returns null (don\'t overwrite a good learned value) when this key\'s count is 0', () => {
+  assert.equal(learnedLimitFromTrip({}, 'gemini-3.8-flash'), null);
+  assert.equal(learnedLimitFromTrip(undefined, 'gemini-3.8-flash'), null);
+});
+
+/* ---- quotaDimension: rpd / tpm / rpm / unknown classification ---- */
+
+const rpdDetail = {
+  error: { details: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', quotaMetric: 'generativelanguage.googleapis.com/generate_requests_per_model_per_day' }] },
+};
+const tpmDetail = {
+  error: { details: [{ quotaId: 'GenerateContentInputTokensPerModelPerMinute-FreeTier', quotaMetric: 'generativelanguage.googleapis.com/generate_content_input_token_count' }] },
+};
+const rpmDetail = {
+  error: { details: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', quotaMetric: 'generativelanguage.googleapis.com/generate_requests_per_model' }] },
+};
+
+test('quotaDimension: PerDay detail classifies as rpd', () => {
+  assert.equal(quotaDimension(rpdDetail, ''), 'rpd');
+});
+
+test('quotaDimension: token + PerMinute detail classifies as tpm', () => {
+  assert.equal(quotaDimension(tpmDetail, ''), 'tpm');
+});
+
+test('quotaDimension: request + PerMinute detail classifies as rpm', () => {
+  assert.equal(quotaDimension(rpmDetail, ''), 'rpm');
+});
+
+test('quotaDimension: falls back to scanning errMsg text for tokens-per-minute wording', () => {
+  assert.equal(quotaDimension(null, 'You exceeded your tokens per minute quota'), 'tpm');
+});
+
+test('quotaDimension: no details and no matching text is unknown', () => {
+  assert.equal(quotaDimension({}, ''), 'unknown');
+  assert.equal(quotaDimension(null, 'generic rate limit'), 'unknown');
 });
 
 /* ---- OpenAI-spec compliance fixes for Google's compat endpoint ---- */
