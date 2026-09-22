@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `PROXY_TTFT_MS`, `PROXY_IDLE_MS`, `PROXY_TOTAL_ATTEMPT_MS`, `PROXY_REQUEST_BUDGET_MS` to tune upstream timeouts.
 - Event bus and `GET /api/events` SSE stream, powering live dashboard events and the OpenCode TUI plugin.
 - In-stream `PROXY_STATUS` status lines rendered in OpenCode's thinking block (or visible content, or disabled).
 - OpenCode TUI plugin (`opencode-plugin/`) showing toast notifications for model switches, slow responses, quota waits, daily quota hits, key rejections, and failed requests.
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Default time-to-first-token timeout raised from 15s to 30s, idle timeout from 30s to 45s, and per-attempt cap from 90s to 120s. Large-context prompts were routinely hitting the 15s guard right before Google started streaming, triggering a needless 30s cooldown and failover.
 - Dashboard extracted from `server.js` into its own file (`dashboard/index.html`) and redesigned with a live routing-pipeline visualizer, KPI row, and per-panel layout.
 
 ### Fixed

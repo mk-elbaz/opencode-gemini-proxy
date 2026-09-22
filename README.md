@@ -151,6 +151,10 @@ All variables live in `.env` (see `.env.example`); the dashboard and CLI write t
 | `GOOGLE_ENABLED_MODELS` | all supported models | Comma-separated subset/order of models to use for failover. |
 | `PROXY_WAIT_FOR_QUOTA` | `true` | Hold requests open until quota returns instead of failing fast with 429; set to `false` for the old fail-fast behavior. |
 | `PROXY_MAX_WAIT_HOURS` | `24` | Give up holding a request after this long. |
+| `PROXY_TTFT_MS` | `30000` | Abort an upstream attempt if Google hasn't sent response headers within this many ms, then fail over. Raise it if long prompts get cut off before the first token. |
+| `PROXY_IDLE_MS` | `45000` | Abort a stream if no bytes arrive for this long. |
+| `PROXY_TOTAL_ATTEMPT_MS` | `120000` | Hard cap on a single upstream attempt. |
+| `PROXY_REQUEST_BUDGET_MS` | `180000` | Hard cap on a whole request across all failover attempts (when not waiting for quota). |
 | `PROXY_STATUS` | `reasoning` | Where in-stream status lines go: `reasoning` (thinking block), `content` (visible answer text), or `off`. |
 | `PROXY_SKIP_KEY_CHECK` | `false` | Skip validating a new key against Google before adding it (useful offline or in tests). |
 | `PROXY_DISCOVERY_HOURS` | `6` | How often the proxy checks Google's model list for new/retired Gemini models. `0` disables the recurring check. |

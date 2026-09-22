@@ -535,10 +535,10 @@ const AUTH_ERROR_RE = /pass a valid api key|api key not valid|api_key_invalid|un
 const DEAD_KEY_PARK_MS = 30 * 60 * 1000;
 
 /* Timeouts (ms) */
-const TTFT_MS = 15000;        // headers must arrive within this
-const IDLE_MS = 30000;        // no upstream bytes for this long -> abort
-const TOTAL_ATTEMPT_MS = 90000;
-const REQUEST_BUDGET_MS = 180000;
+const TTFT_MS = Number(process.env.PROXY_TTFT_MS) || 30000;        // headers must arrive within this (30s default)
+const IDLE_MS = Number(process.env.PROXY_IDLE_MS) || 45000;        // no upstream bytes for this long -> abort (45s default)
+const TOTAL_ATTEMPT_MS = Number(process.env.PROXY_TOTAL_ATTEMPT_MS) || 120000;
+const REQUEST_BUDGET_MS = Number(process.env.PROXY_REQUEST_BUDGET_MS) || 180000;
 
 /* Wait-for-quota: when every model and key is cooling, hold the request open
  * until quota actually returns instead of 429ing. A 429 makes OpenCode abort

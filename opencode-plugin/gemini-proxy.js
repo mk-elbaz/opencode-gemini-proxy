@@ -18,12 +18,14 @@ const VARIANT = {
 export const GeminiProxyPlugin = async ({ client }) => {
   const log = (level, message, extra) => {
     try {
-      client.app?.log?.({ body: { service: "gemini-proxy-plugin", level, message, extra } })
+      const payload = { service: "gemini-proxy-plugin", level, message, extra }
+      client.app?.log?.({ ...payload, body: payload })
     } catch {}
   }
   const toast = (message, variant, duration) => {
     try {
-      client.tui.showToast({ body: { message, variant, duration } })
+      const payload = { message, variant, duration }
+      client.tui?.showToast?.({ ...payload, body: payload })
     } catch (err) {
       log("debug", "showToast failed", { err: String(err) })
     }
@@ -99,3 +101,6 @@ export const GeminiProxyPlugin = async ({ client }) => {
     },
   }
 }
+
+export const Plugin = GeminiProxyPlugin
+export default GeminiProxyPlugin
