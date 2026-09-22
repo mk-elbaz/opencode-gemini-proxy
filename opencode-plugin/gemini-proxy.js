@@ -41,15 +41,10 @@ const MIN_SEVERITY = {
 export const GeminiProxyPlugin = async ({ client }, options = {}) => {
   // Option sources:
   // 1. Plugin option in opencode.json: ["gemini-proxy", { "toasts": false | "off" | "error" }]
-  // 2. Top-level in opencode.json: { "geminiProxy": { "toasts": false } }
-  // 3. Environment variable: GEMINI_PROXY_TOASTS=off | false | error
+  // 2. Environment variable: GEMINI_PROXY_TOASTS=off | false | error
+  // Never call client.* here: OpenCode 1.18 loads plugins while loading its
+  // config, so awaiting client.config.get() at init deadlocks startup.
   let rawSetting = options?.toasts
-  if (rawSetting === undefined) {
-    try {
-      const cfgRes = await client.config?.get?.()
-      rawSetting = cfgRes?.data?.geminiProxy?.toasts ?? cfgRes?.geminiProxy?.toasts
-    } catch {}
-  }
   if (rawSetting === undefined && process.env.GEMINI_PROXY_TOASTS !== undefined) {
     rawSetting = process.env.GEMINI_PROXY_TOASTS
   }

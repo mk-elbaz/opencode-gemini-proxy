@@ -119,12 +119,6 @@ To filter or disable toasts if they are too frequent, configure the option in `o
   ]
   ```
   *(Supported values: `false` / `"off"` / `"none"` to disable all toasts; `"error"` for errors only; `"warning"` for warnings and errors; `"info"` or `true` for all toasts)*
-- **Or in `opencode.json` top-level config:**
-  ```json
-  "geminiProxy": {
-    "toasts": "error"
-  }
-  ```
 - **Or via environment variable:** `GEMINI_PROXY_TOASTS=off` (or `error`, `warning`).
 
 ## Features

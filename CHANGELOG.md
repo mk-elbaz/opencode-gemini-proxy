@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- OpenCode TUI plugin no longer awaits `client.config.get()` during initialization, which deadlocked OpenCode 1.18 startup (blank TUI, hung CLI) whenever the plugin was installed.
 - `GET /` matched only the bare path, so any query string (e.g. `?demo=1`) 404'd — found while adding `?demo=1`.
 - Learned daily (RPD) limits were computed from the pooled request count across all keys instead of the tripping key's own count, so with N keys the learned limit was inflated ~N×; it's now learned per key and pooled (`pooled_daily_limit`) for display.
 
