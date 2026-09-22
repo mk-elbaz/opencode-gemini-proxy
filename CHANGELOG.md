@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Configurable toast verbosity in `gemini-proxy.js` plugin via `opencode.json` plugin options (e.g., `["gemini-proxy", { "toasts": false }]`), top-level `geminiProxy.toasts`, or `GEMINI_PROXY_TOASTS` env var (`false`/`off`/`error`/`warning`/`info`).
 - `PROXY_TTFT_MS`, `PROXY_IDLE_MS`, `PROXY_TOTAL_ATTEMPT_MS`, `PROXY_REQUEST_BUDGET_MS` to tune upstream timeouts.
 - Event bus and `GET /api/events` SSE stream, powering live dashboard events and the OpenCode TUI plugin.
 - In-stream `PROXY_STATUS` status lines rendered in OpenCode's thinking block (or visible content, or disabled).

@@ -111,6 +111,22 @@ OpenCode replays `reasoning_content` back as history on the next turn — the pr
 
 **TUI toasts.** The OpenCode plugin in `opencode-plugin/` shows native toast notifications for model switches, slow responses, rate-limit waits, daily quota hits, key rejections, and failed requests, plus a proxy-health check when a session goes idle. It's a passive observer of `GET /api/events` and `GET /health` — it doesn't affect routing. `init` installs it automatically; to install it by hand, copy `opencode-plugin/gemini-proxy.js` to `~/.config/opencode/plugins/` (global) or `.opencode/plugins/` (per-project).
 
+To filter or disable toasts if they are too frequent, configure the option in `opencode.json` or via environment variable:
+- **In `opencode.json` plugin config:**
+  ```json
+  "plugin": [
+    ["gemini-proxy", { "toasts": false }]
+  ]
+  ```
+  *(Supported values: `false` / `"off"` / `"none"` to disable all toasts; `"error"` for errors only; `"warning"` for warnings and errors; `"info"` or `true` for all toasts)*
+- **Or in `opencode.json` top-level config:**
+  ```json
+  "geminiProxy": {
+    "toasts": "error"
+  }
+  ```
+- **Or via environment variable:** `GEMINI_PROXY_TOASTS=off` (or `error`, `warning`).
+
 ## Features
 
 - **Multi-model fallback cascade** across Google's Gemini flash lineup (`gemini-3.8-flash` down to `gemini-3.1-flash-lite`).

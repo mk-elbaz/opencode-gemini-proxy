@@ -14,8 +14,56 @@ const VARIANT = {
   request_done: "info",
 }
 
+const SEVERITY = {
+  request_done: 0,
+  model_switch: 1,
+  slow_response: 2,
+  waiting: 2,
+  quota_daily: 3,
+  key_rejected: 3,
+  request_failed: 3,
+}
+
+const MIN_SEVERITY = {
+  off: 99,
+  none: 99,
+  false: 99,
+  error: 3,
+  errors: 3,
+  warning: 2,
+  warn: 2,
+  info: 1,
+  all: 0,
+  true: 1,
+}
+
 /** @type {import("@opencode-ai/plugin").Plugin} */
-export const GeminiProxyPlugin = async ({ client }) => {
+export const GeminiProxyPlugin = async ({ client }, options = {}) => {
+  // Option sources:
+  // 1. Plugin option in opencode.json: ["gemini-proxy", { "toasts": false | "off" | "error" }]
+  // 2. Top-level in opencode.json: { "geminiProxy": { "toasts": false } }
+  // 3. Environment variable: GEMINI_PROXY_TOASTS=off | false | error
+  let rawSetting = options?.toasts
+  if (rawSetting === undefined) {
+    try {
+      const cfgRes = await client.config?.get?.()
+      rawSetting = cfgRes?.data?.geminiProxy?.toasts ?? cfgRes?.geminiProxy?.toasts
+    } catch {}
+  }
+  if (rawSetting === undefined && process.env.GEMINI_PROXY_TOASTS !== undefined) {
+    rawSetting = process.env.GEMINI_PROXY_TOASTS
+  }
+
+  const toastSetting = String(rawSetting ?? "info").toLowerCase()
+  const minSev = MIN_SEVERITY[toastSetting] ?? 1
+
+  const shouldToast = (type) => {
+    if (minSev >= 99) return false
+    if (type === "request_done" && !TOAST_DONE) return false
+    const typeSev = SEVERITY[type] ?? 1
+    return typeSev >= minSev
+  }
+
   const log = (level, message, extra) => {
     try {
       const payload = { service: "gemini-proxy-plugin", level, message, extra }
@@ -59,7 +107,7 @@ export const GeminiProxyPlugin = async ({ client }) => {
           if (!data.length) continue
           try {
             const evt = JSON.parse(data.join(""))
-            if (evt.msg && (evt.type !== "request_done" || TOAST_DONE)) {
+            if (evt.msg && shouldToast(evt.type)) {
               dedupedToast(evt.msg, VARIANT[evt.type] || "info", evt.type === "waiting" ? 8000 : undefined)
             }
           } catch (err) {
@@ -85,14 +133,16 @@ export const GeminiProxyPlugin = async ({ client }) => {
           const now = Date.now()
           if (now - lastUnreachableToast > 5 * 60000) {
             lastUnreachableToast = now
-            toast(`Gemini proxy not running at ${BASE_URL}. Start it with: npm start (or npx opencode-gemini-proxy)`, "error")
+            if (shouldToast("request_failed")) {
+              toast(`Gemini proxy not running at ${BASE_URL}. Start it with: npm start (or npx opencode-gemini-proxy)`, "error")
+            }
           }
           return
         }
         const health = await res.json()
         const cooling =
           (health.models || []).some((m) => m.cooling) || (health.keys || []).some((k) => k.cooling)
-        if (health.status === "degraded" || cooling) {
+        if ((health.status === "degraded" || cooling) && shouldToast("waiting")) {
           dedupedToast(`Gemini proxy: ${health.status || "degraded"} (some models/keys cooling)`, "warning")
         }
       } catch (err) {
