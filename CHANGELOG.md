@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-04
+
 ### Added
 
 - OpenCode V2 support: `gemini-proxy.js` now exports both a V2 `{ id, setup(ctx) }` definition (toasts via `ctx.ui.toast`, register in `~/.config/opencode/cli.json`) and the V1 `server()` entry, so one file works on both majors.

@@ -1,6 +1,6 @@
 {
   "name": "opencode-gemini-proxy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-dependency OpenAI-compatible proxy for Google Gemini with auto-failover, multi-key rotation, and OpenCode subagent support",
   "type": "module",
   "main": "server.js",
