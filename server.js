@@ -1037,11 +1037,26 @@ async function relaySse(upstreamRes, res, model, onExhausted, guard, onFirstByte
   // Inspect-only peek: does not touch/reorder the event, just reports token
   // usage if this event happens to carry it (Google sends a final usage-only
   // event on some streams). Never throws on malformed JSON.
+  let sawFinish = false;
+  let lastId = null;
   const peekUsage = (payload) => {
     try {
       const evt = JSON.parse(payload);
       if (evt?.usage && typeof evt.usage.total_tokens === 'number') onUsage(evt.usage);
+      if (evt?.id) lastId = evt.id;
+      if (evt?.choices?.some((c) => c?.finish_reason)) sawFinish = true;
     } catch { /* ignore */ }
+  };
+
+  // OpenCode V2 treats a stream that ends without any finish_reason as a failed
+  // attempt and retries. If Google closed cleanly without one, add it. Only on
+  // clean endings: an interrupted stream must still surface as an error.
+  const ensureFinish = () => {
+    if (sawFinish || !headersSent) return;
+    sawFinish = true;
+    safeWrite(`data: ${JSON.stringify({ id: lastId || 'chatcmpl-proxy', object: 'chat.completion.chunk',
+      created: Math.floor(Date.now() / 1000), model,
+      choices: [{ index: 0, delta: {}, finish_reason: streamState.sawToolCall ? 'tool_calls' : 'stop' }] })}\n\n`);
   };
 
   const decoder = new TextDecoder();
@@ -1060,7 +1075,7 @@ async function relaySse(upstreamRes, res, model, onExhausted, guard, onFirstByte
         buf = buf.slice(nl + 1);
         if (line === '') {
           if (dataField !== null) {
-            if (dataField === '[DONE]') { safeWrite('data: [DONE]\n\n'); done = true; }
+            if (dataField === '[DONE]') { ensureFinish(); safeWrite('data: [DONE]\n\n'); done = true; }
             else {
               peekUsage(dataField);
               if (!inspectEvent(dataField)) safeWrite(`data: ${patchStreamEvent(dataField, streamState)}\n\n`);
@@ -1081,6 +1096,7 @@ async function relaySse(upstreamRes, res, model, onExhausted, guard, onFirstByte
       if (!inspectEvent(dataField)) safeWrite(`data: ${patchStreamEvent(dataField, streamState)}\n\n`);
     }
     sendHeaders();
+    ensureFinish();
     terminate();
   } catch (err) {
     log(`relay stream error: ${err.message}`);

@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Configurable toast verbosity in `gemini-proxy.js` plugin via `opencode.json` plugin options (e.g., `["gemini-proxy", { "toasts": false }]`), top-level `geminiProxy.toasts`, or `GEMINI_PROXY_TOASTS` env var (`false`/`off`/`error`/`warning`/`info`).
+- OpenCode V2 support: `gemini-proxy.js` now exports both a V2 `{ id, setup(ctx) }` definition (toasts via `ctx.ui.toast`, register in `~/.config/opencode/cli.json`) and the V1 `server()` entry, so one file works on both majors.
+- Configurable toast verbosity in `gemini-proxy.js` plugin via `opencode.json` plugin options (e.g., `["gemini-proxy", { "toasts": false }]`) or `GEMINI_PROXY_TOASTS` env var (`false`/`off`/`error`/`warning`/`info`).
 - `PROXY_TTFT_MS`, `PROXY_IDLE_MS`, `PROXY_TOTAL_ATTEMPT_MS`, `PROXY_REQUEST_BUDGET_MS` to tune upstream timeouts.
 - Event bus and `GET /api/events` SSE stream, powering live dashboard events and the OpenCode TUI plugin.
 - In-stream `PROXY_STATUS` status lines rendered in OpenCode's thinking block (or visible content, or disabled).
@@ -37,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- OpenCode V2 toasts never appeared: V2 skips a bare `.js` in `cli.json`; the plugin is now installed as a package directory (`plugins/gemini-proxy/` with a `./tui` export) by `init`. `GEMINI_PROXY_DEBUG=1` now also logs to `<tmpdir>/gemini-proxy-plugin.log`.
+- Fixed UTF-8 BOM (`\uFEFF`) crashing JSON parsing for `cli.json` and `opencode.json` in `cli.js`, and added V2 plugin registration checks to `doctor`.
+- Stripped magic-context `§N§` message tags the model echoed into replies (handles tags split across stream events).
+- Streams that Google closed cleanly without a `finish_reason` now get a synthesized final chunk (`stop`, or `tool_calls` if tools were called) before `[DONE]`; OpenCode V2 treated them as failed and retried ("stream ended without finish_reason").
 - OpenCode TUI plugin no longer awaits `client.config.get()` during initialization, which deadlocked OpenCode 1.18 startup (blank TUI, hung CLI) whenever the plugin was installed.
 - `GET /` matched only the bare path, so any query string (e.g. `?demo=1`) 404'd — found while adding `?demo=1`.
 - Learned daily (RPD) limits were computed from the pooled request count across all keys instead of the tripping key's own count, so with N keys the learned limit was inflated ~N×; it's now learned per key and pooled (`pooled_daily_limit`) for display.

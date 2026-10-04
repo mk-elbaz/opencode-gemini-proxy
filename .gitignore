@@ -7,3 +7,5 @@ node_modules/
 .playwright-mcp/
 usage.json
 .impeccable/
+.opencode/
+.cortexkit/

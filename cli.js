@@ -235,7 +235,7 @@ async function cmdInit(opts) {
       let existing;
       let jsonc = false;
       if (fs.existsSync(ocPath)) {
-        const raw = fs.readFileSync(ocPath, 'utf8');
+        const raw = fs.readFileSync(ocPath, 'utf8').replace(/^\uFEFF/, '');
         try { existing = JSON.parse(raw); } catch { jsonc = true; }
       }
       if (jsonc) {
@@ -261,6 +261,21 @@ async function cmdInit(opts) {
       const dest = path.join(destDir, 'gemini-proxy.js');
       fs.copyFileSync(src, dest);
       console.log(`✔ Installed OpenCode plugin to ${dest}`);
+      // OpenCode V2 shows toasts only for CLI plugins: a package directory with
+      // a ./tui export, listed in cli.json (a bare .js file is skipped).
+      const tuiDir = path.join(destDir, 'gemini-proxy');
+      fs.mkdirSync(tuiDir, { recursive: true });
+      fs.copyFileSync(src, path.join(tuiDir, 'tui.js'));
+      fs.writeFileSync(path.join(tuiDir, 'package.json'), JSON.stringify(
+        { name: 'gemini-proxy-tui', type: 'module', exports: { './tui': './tui.js' }, 'oc-plugin': ['tui'] }, null, 2) + '\n');
+      // Create cli.json when absent; never edit an existing one (may be JSONC).
+      const cliJson = path.join(os.homedir(), '.config', 'opencode', 'cli.json');
+      if (!fs.existsSync(cliJson)) {
+        fs.writeFileSync(cliJson, JSON.stringify({ plugins: ['./plugins/gemini-proxy'] }, null, 2) + '\n');
+        console.log(`✔ Registered plugin for OpenCode V2 in ${cliJson}`);
+      } else {
+        console.log(`  OpenCode V2: ensure "./plugins/gemini-proxy" is in "plugins" of ${cliJson}`);
+      }
     }
 
     // (f) next steps
@@ -304,7 +319,7 @@ async function cmdDoctor() {
   const ocPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
   if (fs.existsSync(ocPath)) {
     try {
-      const cfg = JSON.parse(fs.readFileSync(ocPath, 'utf8'));
+      const cfg = JSON.parse(fs.readFileSync(ocPath, 'utf8').replace(/^\uFEFF/, ''));
       const g = cfg.provider?.google;
       console.log(`opencode.json provider.google: ${g ? `present (baseURL ${g.options?.baseURL ?? 'unset'})` : 'missing'}`);
     } catch {
@@ -315,7 +330,18 @@ async function cmdDoctor() {
   }
 
   const pluginPath = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'gemini-proxy.js');
-  console.log(`Plugin: ${fs.existsSync(pluginPath) ? 'installed' : 'not installed'} (${pluginPath})`);
+  const v2PluginPath = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'gemini-proxy', 'tui.js');
+  const cliJsonPath = path.join(os.homedir(), '.config', 'opencode', 'cli.json');
+  let v2Registered = false;
+  if (fs.existsSync(cliJsonPath)) {
+    try {
+      const raw = fs.readFileSync(cliJsonPath, 'utf8').replace(/^\uFEFF/, '');
+      const c = JSON.parse(raw);
+      v2Registered = (c.plugins || []).some((p) => (typeof p === 'string' ? p : p.package)?.includes('gemini-proxy'));
+    } catch {}
+  }
+  console.log(`Plugin (V1): ${fs.existsSync(pluginPath) ? 'installed' : 'not installed'} (${pluginPath})`);
+  console.log(`Plugin (V2): ${fs.existsSync(v2PluginPath) ? 'installed' : 'not installed'} (cli.json: ${v2Registered ? 'registered' : 'not registered'})`);
 
   const logPath = path.join(dataDir, 'proxy.log');
   if (fs.existsSync(logPath)) {

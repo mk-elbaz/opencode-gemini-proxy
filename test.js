@@ -328,3 +328,14 @@ test('correctFinishReason: only rewrites stop, and only when tool calls are pres
   correctFinishReason(truncated, [{ id: 'a' }]);
   assert.equal(truncated.finish_reason, 'length');
 });
+
+test('patchStreamEvent: strips echoed magic-context §N§ tags, even split across events', () => {
+  const state = { nextIndex: 0, sawToolCall: false };
+  const c = (t, fin) => stream({ choices: [{ delta: { content: t }, finish_reason: fin ?? null, index: 0 }] });
+  const text = (p) => JSON.parse(p).choices[0].delta.content;
+  assert.equal(text(patchStreamEvent(c('done §102§ ok'), state)), 'done ok');
+  assert.equal(text(patchStreamEvent(c('a §1'), state)), 'a ');
+  assert.equal(text(patchStreamEvent(c('02§ b'), state)), 'b');
+  const plain = c('no tags here');
+  assert.equal(patchStreamEvent(plain, state), plain); // untouched, byte-for-byte
+});

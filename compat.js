@@ -53,6 +53,22 @@ export function patchStreamEvent(payload, state) {
   if (!choice) return payload;
   let changed = false;
 
+  // 0. Strip magic-context `§123§ ` message tags the model echoes into its reply.
+  // A tag can straddle two events, so a trailing partial (`§`, `§12`) is held
+  // back in state.tagTail and prepended to the next content.
+  // ponytail: a stream that ends mid-tag drops <=5 held chars (they were tag prefix anyway).
+  if (typeof choice.delta?.content === 'string' || state.tagTail) {
+    const raw = (state.tagTail || '') + (choice.delta?.content || '');
+    state.tagTail = '';
+    let text = raw.replace(/§\d+§ ?/g, '');
+    const partial = text.match(/§\d*$/);
+    if (partial && !choice.finish_reason) { state.tagTail = partial[0]; text = text.slice(0, -partial[0].length); }
+    if (text !== (choice.delta?.content || '')) {
+      choice.delta = { ...choice.delta, content: text };
+      changed = true;
+    }
+  }
+
   const tcs = choice.delta?.tool_calls;
   if (Array.isArray(tcs) && tcs.length) {
     state.sawToolCall = true;

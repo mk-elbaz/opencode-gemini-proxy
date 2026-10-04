@@ -111,13 +111,21 @@ OpenCode replays `reasoning_content` back as history on the next turn — the pr
 
 **TUI toasts.** The OpenCode plugin in `opencode-plugin/` shows native toast notifications for model switches, slow responses, rate-limit waits, daily quota hits, key rejections, and failed requests, plus a proxy-health check when a session goes idle. It's a passive observer of `GET /api/events` and `GET /health` — it doesn't affect routing. `init` installs it automatically; to install it by hand, copy `opencode-plugin/gemini-proxy.js` to `~/.config/opencode/plugins/` (global) or `.opencode/plugins/` (per-project).
 
-To filter or disable toasts if they are too frequent, configure the option in `opencode.json` or via environment variable:
-- **In `opencode.json` plugin config:**
+**OpenCode V2.** The same code works on V1 and V2, but V2 only gives toasts to CLI plugins, which must be a package directory (a bare `.js` file in `cli.json` is silently skipped). `init` sets this up; by hand, copy `gemini-proxy.js` to `~/.config/opencode/plugins/gemini-proxy/tui.js`, add a `package.json` there containing `{ "type": "module", "exports": { "./tui": "./tui.js" }, "oc-plugin": ["tui"] }`, and register it in `~/.config/opencode/cli.json`:
+```json
+{ "plugins": [{ "package": "./plugins/gemini-proxy", "options": { "toasts": "info" } }] }
+```
+Set `GEMINI_PROXY_DEBUG=1` to log plugin activity (including each toast) to `<tmpdir>/gemini-proxy-plugin.log`.
+V2 also reads the V1-style `provider` block above; the native V2 form is `providers` with `"package": "aisdk:@ai-sdk/openai-compatible"` and `settings.baseURL` (see the [migration guide](https://opencode.ai/v2/docs/migrate-v1/)).
+
+To filter or disable toasts if they are too frequent, configure the option in your plugin config or via environment variable:
+- **V1 (`opencode.json`):**
   ```json
   "plugin": [
     ["gemini-proxy", { "toasts": false }]
   ]
   ```
+  **V2:** set `"options": { "toasts": false }` on the `cli.json` entry above.
   *(Supported values: `false` / `"off"` / `"none"` to disable all toasts; `"error"` for errors only; `"warning"` for warnings and errors; `"info"` or `true` for all toasts)*
 - **Or via environment variable:** `GEMINI_PROXY_TOASTS=off` (or `error`, `warning`).
 

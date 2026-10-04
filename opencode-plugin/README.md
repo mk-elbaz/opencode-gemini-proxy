@@ -11,13 +11,30 @@ behavior.
 
 ## Install
 
-Copy `gemini-proxy.js` into an OpenCode plugin directory:
+### OpenCode V2
+`npx opencode-gemini-proxy init` sets this up automatically. To install by hand:
+1. Create directory `~/.config/opencode/plugins/gemini-proxy/`
+2. Copy `gemini-proxy.js` to `~/.config/opencode/plugins/gemini-proxy/tui.js`
+3. Add `package.json` there containing:
+   ```json
+   { "type": "module", "exports": { "./tui": "./tui.js" }, "oc-plugin": ["tui"] }
+   ```
+4. Register it in `~/.config/opencode/cli.json`:
+   ```json
+   {
+     "plugins": [
+       { "package": "./plugins/gemini-proxy", "options": { "toasts": "info" } }
+     ]
+   }
+   ```
+*(Note: OpenCode V2 requires a package directory with a `./tui` export for CLI toasts; a bare `.js` in `cli.json` is skipped.)*
 
+### OpenCode V1 (1.18.x)
+Copy `gemini-proxy.js` into an OpenCode plugin directory:
 - Global: `~/.config/opencode/plugins/` (Windows: `%USERPROFILE%\.config\opencode\plugins\`)
 - Per-project: `.opencode/plugins/` in your project root
 
-OpenCode loads `.js`/`.ts` files in these directories automatically on
-startup — no config entry needed.
+V1 loads `.js`/`.ts` files in these directories automatically on startup — no config entry needed.
 
 ## Env vars
 
